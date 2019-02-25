@@ -17,14 +17,6 @@ set projects=
 	set config=debug
 )
 
-set config="%config%|%FB_TARGET_PLATFORM%"
-
-if "%VS_VER_EXPRESS%"=="1" (
-	set exec=vcexpress
-) else (
-	set exec=devenv
-)
-
 shift
 shift
 
@@ -32,14 +24,14 @@ shift
 
 if "%1" == "" goto loop_end
 
-set projects=%projects% /project %1
+set projects=%projects% /target:%1%FB_CLEAN%
 
 shift
 goto loop_start
 
 :loop_end
 
-%exec% %solution%.sln %projects% %FB_CLEAN% %config% /OUT %output%
+msbuild %solution%.sln /maxcpucount /p:Configuration=%config% /p:Platform=%FB_TARGET_PLATFORM% %projects% /fileLoggerParameters:LogFile=%output%
 
 endlocal
 
