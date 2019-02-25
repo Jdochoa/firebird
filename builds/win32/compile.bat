@@ -8,6 +8,7 @@
 
 setlocal
 set solution=%1
+set output_path=%~dp2
 set output=%2
 set projects=
 
@@ -31,6 +32,7 @@ goto loop_start
 
 :loop_end
 
+if not exist %output_path% mkdir %output_path%
 msbuild %solution%.sln /maxcpucount /p:Configuration=%config% /p:Platform=%FB_TARGET_PLATFORM% %projects% /fileLoggerParameters:LogFile=%output%
 
 endlocal
