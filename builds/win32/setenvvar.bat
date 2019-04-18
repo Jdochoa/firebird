@@ -1,5 +1,6 @@
 :: This batch file sets the environment values
 :: FB_ROOT_PATH dos format path of the main directory
+:: FB_LONG_ROOT_PATH long format path of the main directory
 :: FB_DB_PATH unix format path of the main directory
 :: (This is used by gpre and preprocess.bat)
 :: VS_VER VisualStudio version (msvc10|msvc12|msvc14)
@@ -50,6 +51,7 @@ set VS_VER=msvc%MSVC_VERSION%
 @SET SERVER_NAME=localhost
 
 @cd ..\..
+@for /f "delims=" %%a in ('@cd') do (set FB_LONG_ROOT_PATH=%%a)
 @for /f "delims=" %%a in ('@cd') do (set FB_ROOT_PATH=%%~sa)
 @cd %~dp0
 @for /f "tokens=*" %%a in ('@echo %FB_ROOT_PATH:\=/%') do (set FB_DB_PATH=%%a)
