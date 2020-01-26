@@ -65,6 +65,11 @@ Remote_Client_Objects:= $(Remote_Common) $(Remote_Client)
 AllObjects += $(Remote_Common) $(Remote_Server) $(Remote_Client)
 
 
+# Chacha plugin
+Chacha_Objects:= $(call dirObjects,plugins/crypt/chacha)
+
+AllObjects += $(Chacha_Objects)
+
 # Engine
 Engine_Objects:= $(call dirObjects,jrd) $(call dirObjects,dsql) $(call dirObjects,jrd/extds) \
 				 $(call dirObjects,jrd/recsrc) $(call dirObjects,jrd/replication) $(call dirObjects,jrd/trace) \

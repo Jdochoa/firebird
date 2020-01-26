@@ -266,13 +266,6 @@ public:
 
 int setGsecCode(int code, unsigned int operation);
 
-// tools to operate lists of security-related plugins
-typedef Firebird::ObjectsArray<Firebird::PathName> ParsedList;
-void parseList(ParsedList& parsed, Firebird::PathName list);
-void makeList(Firebird::PathName& list, const ParsedList& parsed);
-void mergeLists(Firebird::PathName& list, const Firebird::PathName& serverList,
-	const Firebird::PathName& clientList);
-
 } // namespace Auth
 
 #endif // UTILITIES_SECUR_PROTO_H

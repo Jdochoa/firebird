@@ -33,7 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../gpre/gpre.h"
 #include "../gpre/pat.h"
 #include "../gpre/msc_proto.h"
@@ -138,11 +138,7 @@ static const char* const NULL_STRING	= "(char*) 0";
 static const char* const NULL_STATUS	= "NULL";
 static const char* const NULL_SQLDA		= "NULL";
 
-#ifdef DARWIN
-static const char* const GDS_INCLUDE	= "<Firebird/ibase.h>";
-#else
 static const char* const GDS_INCLUDE	= "<ibase.h>";
-#endif
 
 static const char* const DCL_LONG	= "ISC_LONG";
 static const char* const DCL_QUAD	= "ISC_QUAD";
@@ -1215,9 +1211,16 @@ static void gen_compile( const act* action, int column)
 
 	PATTERN_expand((USHORT) column, pattern2, &args);
 
+	column += INDENT;
+	begin(column);
+
 	args.pat_condition = !(request->req_flags & REQ_exp_hand);
 	args.pat_value1 = request->req_length;
-	PATTERN_expand((USHORT) (column + INDENT), pattern1, &args);
+	PATTERN_expand((USHORT) column, pattern1, &args);
+
+	set_sqlcode(action, column);
+	endp(column);
+	column -= INDENT;
 
 	// If blobs are present, zero out all of the blob handles.  After this
 	// point, the handles are the user's responsibility
@@ -2595,10 +2598,10 @@ static void gen_procedure( const act* action, int column)
 	const TEXT* pattern;
 	if (in_port && in_port->por_length)
 		pattern =
-			"isc_transact_request (%V1, %RF%DH%RE, %RF%RT%RE, sizeof(%RI), %RI, (short) %PL, (char*) %RF%PI%RE, (short) %QL, (char*) %RF%QI%RE);";
+			"isc_transact_request (%V1, %RF%DH%RE, %RF%RT%RE, (unsigned short) sizeof(%RI), (char*) %RI, (unsigned short) %PL, (char*) %RF%PI%RE, (unsigned short) %QL, (char*) %RF%QI%RE);";
 	else
 		pattern =
-			"isc_transact_request (%V1, %RF%DH%RE, %RF%RT%RE, sizeof(%RI), %RI, 0, 0, (short) %QL, (char*) %RF%QI%RE);";
+			"isc_transact_request (%V1, %RF%DH%RE, %RF%RT%RE, (unsigned short) sizeof(%RI), (char*) %RI, 0, 0, (unsigned short) %QL, (char*) %RF%QI%RE);";
 
 	// Get database attach and transaction started
 

@@ -101,7 +101,7 @@ const int INET_RETRY_CALL = 5;
 
 #include "../remote/remote.h"
 #include "../remote/SockAddr.h"
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../remote/inet_proto.h"
 #include "../remote/proto_proto.h"
 #include "../remote/remot_proto.h"
@@ -653,14 +653,14 @@ rem_port* INET_analyze(ClntAuthBlock* cBlock,
 										   packet->p_acpd.p_acpt_data.cstr_address);
 				cBlock->authComplete = packet->p_acpd.p_acpt_authenticated;
 				port->addServerKeys(&packet->p_acpd.p_acpt_keys);
-				cBlock->resetClnt(&file_name, &packet->p_acpd.p_acpt_keys);
+				cBlock->resetClnt(&packet->p_acpd.p_acpt_keys);
 			}
 			break;
 
 		case op_accept:
 			if (cBlock)
 			{
-				cBlock->resetClnt(&file_name);
+				cBlock->resetClnt();
 			}
 			accept = &packet->p_acpt;
 			break;
@@ -836,6 +836,7 @@ rem_port* INET_connect(const TEXT* name,
 	if (host.hasData())
 	{
 		delete port->port_connection;
+		port->port_connection = nullptr;
 		port->port_connection = REMOTE_make_string(host.c_str());
 	}
 	else {
@@ -879,15 +880,25 @@ rem_port* INET_connect(const TEXT* name,
 #endif
 			AI_ADDRCONFIG | (packet ? 0 : AI_PASSIVE);
 
+	struct AutoAddrInfo
+	{
+		~AutoAddrInfo()
+		{
+			if (ptr)
+				freeaddrinfo(ptr);
+		}
+
+		addrinfo* ptr = nullptr;
+	} gai_result;
+
 	const char* host_str = (host.hasData() ? host.c_str() : NULL);
-	struct addrinfo* gai_result;
 	bool retry_gai;
 	int n;
 
 	do
 	{
 		retry_gai = false;
-		n = getaddrinfo(host_str, protocol.c_str(), &gai_hints, &gai_result);
+		n = getaddrinfo(host_str, protocol.c_str(), &gai_hints, &gai_result.ptr);
 
 		if ((n == EAI_FAMILY || (!host_str && n == EAI_NONAME)) &&
 			(gai_hints.ai_family == AF_INET6) && (af != AF_INET6))
@@ -912,7 +923,7 @@ rem_port* INET_connect(const TEXT* name,
 		inet_gen_error(true, port, Arg::Gds(isc_net_lookup_err) << Arg::Gds(isc_host_unknown));
 	}
 
-	for (const addrinfo* pai = gai_result; pai; pai = pai->ai_next)
+	for (const addrinfo* pai = gai_result.ptr; pai; pai = pai->ai_next)
 	{
 		// Allocate a port block and initialize a socket for communications
 		port->port_handle = os_utils::socket(pai->ai_family, pai->ai_socktype, pai->ai_protocol);
@@ -935,30 +946,27 @@ rem_port* INET_connect(const TEXT* name,
 			}
 
 			if (!setNoNagleOption(port))
-			{
 				gds__log("setsockopt: error setting TCP_NODELAY");
-				goto err_close;
-			}
-
-			setFastLoopbackOption(port);
-
-			n = connect(port->port_handle, pai->ai_addr, pai->ai_addrlen);
-			if (n != -1)
+			else
 			{
-				port->port_peer_name = host;
-				get_peer_info(port);
-				if (send_full(port, packet))
-					goto exit_free;
+				setFastLoopbackOption(port);
+
+				n = connect(port->port_handle, pai->ai_addr, pai->ai_addrlen);
+				if (n != -1)
+				{
+					port->port_peer_name = host;
+					get_peer_info(port);
+					if (send_full(port, packet))
+						return port;
+				}
 			}
 		}
 		else
 		{
 			// server
-			port = listener_socket(port, flag, pai);
-			goto exit_free;
+			return listener_socket(port, flag, pai);
 		}
 
-err_close:
 		SOCLOSE(port->port_handle);
 	}
 
@@ -968,8 +976,6 @@ err_close:
 	else
 		inet_error(true, port, "listen", isc_net_connect_listen_err, 0);
 
-exit_free:
-	freeaddrinfo(gai_result);
 	return port;
 }
 
@@ -1480,6 +1486,7 @@ static rem_port* aux_connect(rem_port* port, PACKET* packet)
 		port->auxAcceptError(packet);
 		inet_error(false, port, "socket", isc_net_event_connect_err, savedError);
 	}
+
 	SockAddr resp_address(response->p_resp_data.cstr_address, response->p_resp_data.cstr_length);
 	address.setPort(resp_address.port());
 
@@ -1577,7 +1584,6 @@ static rem_port* aux_request( rem_port* port, PACKET* packet)
 		inet_error(false, port, "listen", isc_net_event_listen_err, INET_ERRNO);
 	}
 
-
 	rem_port* const new_port = alloc_port(port->port_parent,
 		(port->port_flags & PORT_no_oob) | PORT_async | PORT_connecting);
 	port->port_async = new_port;
@@ -1592,11 +1598,31 @@ static rem_port* aux_request( rem_port* port, PACKET* packet)
 	P_RESP* response = &packet->p_resp;
 
 	SockAddr port_address;
+
 	if (port_address.getsockname(port->port_handle) < 0)
-	{
 		inet_error(false, port, "getsockname", isc_net_event_listen_err, INET_ERRNO);
-	}
+
 	port_address.setPort(our_address.port());
+
+	// CORE-5902: MacOS has sockaddr struct layout different than one found in POSIX/Windows.
+	// This prevent usage of events when client or server is MacOS but the other end is not.
+	// Here we try to make this case work. However it's not bullet-proof for others platforms and architectures.
+	// A proper solution would be to just send the port number in a protocol friendly way.
+
+	bool macOsClient =
+		port->port_client_arch == arch_darwin_ppc ||
+		port->port_client_arch == arch_darwin_x64 ||
+		port->port_client_arch == arch_darwin_ppc64;
+
+	bool macOsServer =
+		ARCHITECTURE == arch_darwin_ppc ||
+		ARCHITECTURE == arch_darwin_x64 ||
+		ARCHITECTURE == arch_darwin_ppc64;
+
+	if (macOsServer && !macOsClient)
+		port_address.convertFromMacOsToPosixWindows();
+	else if (!macOsServer && macOsClient)
+		port_address.convertFromPosixWindowsToMacOs();
 
 	response->p_resp_data.cstr_length = (ULONG) port_address.length();
 	memcpy(response->p_resp_data.cstr_address, port_address.ptr(), port_address.length());
@@ -1996,7 +2022,7 @@ static bool select_multi(rem_port* main_port, UCHAR* buffer, SSHORT bufsize, SSH
 					SOCLOSE(main_port->port_handle);
 				}
 			}
-			else if (port = select_accept(main_port))
+			else if ((port = select_accept(main_port)))
 			{
 				if (!REMOTE_inflate(port, packet_receive, buffer, bufsize, length))
 				{

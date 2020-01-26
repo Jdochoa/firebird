@@ -60,11 +60,11 @@ public:
 			If the symbol can't be found or doesn't exist the function returns
 			NULL.
 		**/
-		virtual void* findSymbol(const Firebird::string&) = 0;
+		virtual void* findSymbol(ISC_STATUS*, const Firebird::string&) = 0;
 
-		template <typename T> T& findSymbol(const Firebird::string& symbol, T& ptr)
+		template <typename T> T& findSymbol(ISC_STATUS* status, const Firebird::string& symbol, T& ptr)
 		{
-			return (ptr = (T)(findSymbol(symbol)));
+			return (ptr = (T)(findSymbol(status, symbol)));
 		}
 
 		/// Destructor

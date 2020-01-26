@@ -17,10 +17,27 @@
 	ISC_QUAD = array [1..2] of Integer;
 	FB_DEC16 = array [1..1] of Int64;
 	FB_DEC34 = array [1..2] of Int64;
-	FB_DEC_FIXED = array [1..2] of Int64;
+	FB_I128 = array [1..2] of Int64;
 
-    isc_tr_handle = ^integer32;
-    isc_stmt_handle = ^integer32;
+	isc_tr_handle = ^Integer;
+	isc_stmt_handle = ^Integer;
+
+	ISC_USHORT = word; { 16 bit unsigned }
+
+	ISC_TIME_TZ = record
+		utc_time: ISC_TIME;
+		time_zone: ISC_USHORT;
+	end;
+
+	ISC_TIMESTAMP = record
+		timestamp_date: ISC_DATE;
+		timestamp_time: ISC_TIME;
+	end;
+
+	ISC_TIMESTAMP_TZ = record
+		utc_timestamp: ISC_TIMESTAMP;
+		time_zone: ISC_USHORT;
+	end;
 
 	ntrace_relation_t = Integer;
 	TraceCounts = Record

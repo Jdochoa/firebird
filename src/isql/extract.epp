@@ -46,7 +46,7 @@
 #include <math.h>
 #include <ctype.h>				// isdigit
 #include "../jrd/constants.h"
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../yvalve/gds_proto.h"
 #include "../common/intlobj_new.h"
 #include "../isql/isql.h"
@@ -97,7 +97,7 @@ static void list_views();
 
 static const char* const Procterm = "^";	// TXNN: script use only
 
-static TEXT SQL_identifier[BUFFER_LENGTH128];
+static TEXT SQL_identifier[BUFFER_LENGTH256];
 static TEXT SQL_identifier2[BUFFER_XLARGE]; // should be >= 1026 bytes (exception text + two quotes)
 
 
@@ -417,10 +417,13 @@ int EXTRACT_list_table(const SCHAR* relation_name,
 
 			if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR))
 			{
-				if (FLD.RDB$CHARACTER_LENGTH.NULL)
-					isqlGlob.printf("(%d)", FLD.RDB$FIELD_LENGTH);
-				else
-					isqlGlob.printf("(%d)", FLD.RDB$CHARACTER_LENGTH);
+				isqlGlob.printf("(%d)",
+					ISQL_get_char_length(
+						FLD.RDB$FIELD_LENGTH,
+						FLD.RDB$CHARACTER_LENGTH.NULL, FLD.RDB$CHARACTER_LENGTH,
+						FLD.RDB$CHARACTER_SET_ID.NULL, FLD.RDB$CHARACTER_SET_ID
+					)
+				);
 			}
 
 			// Catch arrays after printing the type
@@ -727,8 +730,8 @@ static void get_procedure_args(const char* proc_name)
 			if (!PRM.RDB$PARAMETER_MECHANISM.NULL)
 				prm_mech = (prm_mech_t) PRM.RDB$PARAMETER_MECHANISM;
 
-			char relationName[BUFFER_LENGTH128] = "";
-			char relationField[BUFFER_LENGTH128] = "";
+			char relationName[BUFFER_LENGTH256] = "";
+			char relationField[BUFFER_LENGTH256] = "";
 
 			if (!PRM.RDB$RELATION_NAME.NULL)
 			{
@@ -833,10 +836,13 @@ static void get_procedure_args(const char* proc_name)
 				//   FSG 18.Nov.2000
 				if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR))
 				{
-					if (FLD.RDB$CHARACTER_LENGTH.NULL)
-						isqlGlob.printf("(%d)", FLD.RDB$FIELD_LENGTH);
-					else
-						isqlGlob.printf("(%d)", FLD.RDB$CHARACTER_LENGTH);
+					isqlGlob.printf("(%d)",
+						ISQL_get_char_length(
+							FLD.RDB$FIELD_LENGTH,
+							FLD.RDB$CHARACTER_LENGTH.NULL, FLD.RDB$CHARACTER_LENGTH,
+							FLD.RDB$CHARACTER_SET_ID.NULL, FLD.RDB$CHARACTER_SET_ID
+						)
+					);
 				}
 
 				// Show international character sets and collations
@@ -942,8 +948,8 @@ static void get_function_args_ods12(const char* func_name, USHORT out_arg)
 			if (!ARG.RDB$ARGUMENT_MECHANISM.NULL)
 				prm_mech = (prm_mech_t) ARG.RDB$ARGUMENT_MECHANISM;
 
-			char relationName[BUFFER_LENGTH128] = "";
-			char relationField[BUFFER_LENGTH128] = "";
+			char relationName[BUFFER_LENGTH256] = "";
+			char relationField[BUFFER_LENGTH256] = "";
 
 			if (!ARG.RDB$RELATION_NAME.NULL)
 			{
@@ -1054,10 +1060,13 @@ static void get_function_args_ods12(const char* func_name, USHORT out_arg)
 				//   FSG 18.Nov.2000
 				if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR))
 				{
-					if (FLD.RDB$CHARACTER_LENGTH.NULL)
-						isqlGlob.printf("(%d)", FLD.RDB$FIELD_LENGTH);
-					else
-						isqlGlob.printf("(%d)", FLD.RDB$CHARACTER_LENGTH);
+					isqlGlob.printf("(%d)",
+						ISQL_get_char_length(
+							FLD.RDB$FIELD_LENGTH,
+							FLD.RDB$CHARACTER_LENGTH.NULL, FLD.RDB$CHARACTER_LENGTH,
+							FLD.RDB$CHARACTER_SET_ID.NULL, FLD.RDB$CHARACTER_SET_ID
+						)
+					);
 				}
 
 				// Show international character sets and collations
@@ -2624,10 +2633,13 @@ static void listRelationComputed(LegacyTables flag, SSHORT default_char_set_id)
 
 				if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR))
 				{
-					if (FLD.RDB$CHARACTER_LENGTH.NULL)
-						isqlGlob.printf("(%d)", FLD.RDB$FIELD_LENGTH);
-					else
-						isqlGlob.printf("(%d)", FLD.RDB$CHARACTER_LENGTH);
+					isqlGlob.printf("(%d)",
+						ISQL_get_char_length(
+							FLD.RDB$FIELD_LENGTH,
+							FLD.RDB$CHARACTER_LENGTH.NULL, FLD.RDB$CHARACTER_LENGTH,
+							FLD.RDB$CHARACTER_SET_ID.NULL, FLD.RDB$CHARACTER_SET_ID
+						)
+					);
 				}
 
 				// Catch arrays after printing the type
@@ -2905,8 +2917,8 @@ static void list_functions_legacy()
  *               RETURNS INTEGER BY VALUE
  *               ENTRY_POINT entrypoint MODULE_NAME module;
  **************************************/
-	char type_buffer[BUFFER_LENGTH128];
-	char return_buffer[BUFFER_LENGTH128];
+	char type_buffer[BUFFER_LENGTH256];
+	char return_buffer[BUFFER_LENGTH256];
 
 	bool first = true;
 

@@ -1130,8 +1130,8 @@ void CCH_flush(thread_db* tdbb, USHORT flush_flag, TraNumber tra_number)
 
 	const Jrd::Attachment* att = tdbb->getAttachment();
 	const bool dontFlush = (dbb->dbb_flags & DBB_creating) ||
-		(dbb->dbb_ast_flags & DBB_shutdown_single) &&
-		att && (att->att_flags & (ATT_creator | ATT_system));
+		((dbb->dbb_ast_flags & DBB_shutdown_single) &&
+			att && (att->att_flags & (ATT_creator | ATT_system)));
 
 	if (!(main_file->fil_flags & FIL_force_write) && (max_num || max_time) && !dontFlush)
 	{
@@ -2959,7 +2959,7 @@ void BufferControl::cache_writer(BufferControl* bcb)
 		UserId user;
 		user.setUserName("Cache Writer");
 
-		Jrd::Attachment* const attachment = Jrd::Attachment::create(dbb, nullptr);
+		Jrd::Attachment* const attachment = Jrd::Attachment::create(dbb);
 		RefPtr<SysStableAttachment> sAtt(FB_NEW SysStableAttachment(attachment));
 		attachment->setStable(sAtt);
 		attachment->att_filename = dbb->dbb_filename;
@@ -5159,8 +5159,8 @@ void requeueRecentlyUsed(BufferControl* bcb)
 		QUE_DELETE(bdb->bdb_in_use);
 		QUE_INSERT(bcb->bcb_in_use, bdb->bdb_in_use);
 
-		bdb->bdb_flags &= ~BDB_lru_chained;
 		bdb->bdb_lru_chain = NULL;
+		bdb->bdb_flags &= ~BDB_lru_chained;
 	}
 
 	chain = bcb->bcb_lru_chain;

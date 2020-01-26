@@ -24,7 +24,7 @@
 #include "firebird.h"
 #include <string.h>
 #include <stdlib.h>
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../remote/remote.h"
 #include "../common/file_params.h"
 #include "../common/gdsassert.h"
@@ -944,13 +944,13 @@ void ClntAuthBlock::extractDataFromPluginTo(Firebird::ClumpletWriter& user_id)
 	if (pluginName.hasData())
 	{
 		HANDSHAKE_DEBUG(fprintf(stderr, "Cli: extractDataFromPluginTo: pluginName=%s\n", pluginName.c_str()));
-		user_id.insertPath(CNCT_plugin_name, pluginName);
+		user_id.insertString(CNCT_plugin_name, pluginName);
 	}
 
 	// Add plugin list
 	if (pluginList.hasData())
 	{
-		user_id.insertPath(CNCT_plugin_list, pluginList);
+		user_id.insertString(CNCT_plugin_list, pluginList);
 	}
 
 	// This is specially tricky field - user_id is limited to 255 bytes per entry,
@@ -963,7 +963,7 @@ void ClntAuthBlock::extractDataFromPluginTo(Firebird::ClumpletWriter& user_id)
 	user_id.insertInt(CNCT_client_crypt, clntConfig->getWireCrypt(WC_CLIENT));
 }
 
-void ClntAuthBlock::resetClnt(const Firebird::PathName* fileName, const CSTRING* listStr)
+void ClntAuthBlock::resetClnt(const CSTRING* listStr)
 {
 	if (listStr)
 	{
@@ -986,14 +986,13 @@ void ClntAuthBlock::resetClnt(const Firebird::PathName* fileName, const CSTRING*
 	dataFromPlugin.clear();
 	firstTime = true;
 
-	clntConfig = REMOTE_get_config(fileName, &dpbConfig);
 	pluginList = dpbPlugins.hasData() ? dpbPlugins :
 		clntConfig->getPlugins(Firebird::IPluginManager::TYPE_AUTH_CLIENT);
 
 	Firebird::PathName final;
 	if (serverPluginList.hasData())
 	{
-		Auth::mergeLists(final, serverPluginList, pluginList);
+		Firebird::ParsedList::mergeLists(final, serverPluginList, pluginList);
 		if (final.length() == 0)
 		{
 			HANDSHAKE_DEBUG(fprintf(stderr, "Cli: No matching plugins on client\n"));
@@ -1148,27 +1147,36 @@ void rem_port::addServerKeys(CSTRING* passedStr)
 	Firebird::ClumpletReader newKeys(Firebird::ClumpletReader::UnTagged,
 									 passedStr->cstr_address, passedStr->cstr_length);
 
+	Firebird::PathName type, plugins, plugin;
+	unsigned len;
+	KnownServerKey* currentKey = nullptr;
 	for (newKeys.rewind(); !newKeys.isEof(); newKeys.moveNext())
 	{
-		if (newKeys.getClumpTag() == TAG_KNOWN_PLUGINS)
+		switch(newKeys.getClumpTag())
 		{
-			continue;
-		}
-
-		KnownServerKey key;
-		fb_assert(newKeys.getClumpTag() == TAG_KEY_TYPE);
-		newKeys.getPath(key.type);
-		newKeys.moveNext();
-		if (newKeys.isEof())
-		{
+		case TAG_KEY_TYPE:
+			newKeys.getPath(type);
+			break;
+		case TAG_KEY_PLUGINS:
+			newKeys.getPath(plugins);
+			plugins += ' ';
+			plugins.insert(0, " ");
+			currentKey = &port_known_server_keys.add();
+			currentKey->type = type;
+			currentKey->plugins = plugins;
+			break;
+		case TAG_PLUGIN_SPECIFIC:
+			plugin.assign(newKeys.getBytes(), newKeys.getClumpLength());
+			len = strlen(plugin.c_str()) + 1;
+			if (len < plugin.length())
+			{
+				const char* data = &plugin[len];
+				len = plugin.length() - len;
+				plugin.recalculate_length();
+				currentKey->addSpecificData(plugin, len, data);
+			}
 			break;
 		}
-		fb_assert(newKeys.getClumpTag() == TAG_KEY_PLUGINS);
-		newKeys.getPath(key.plugins);
-		key.plugins += ' ';
-		key.plugins.insert(0, " ");
-
-		port_known_server_keys.add(key);
 	}
 }
 
@@ -1193,7 +1201,7 @@ bool rem_port::tryKeyType(const KnownServerKey& srvKey, InternalCryptKey* cryptK
 		return true;
 	}
 
-	if (srvKey.type != cryptKey->t)
+	if (srvKey.type != cryptKey->keyName)
 	{
 		return false;
 	}
@@ -1206,8 +1214,7 @@ bool rem_port::tryKeyType(const KnownServerKey& srvKey, InternalCryptKey* cryptK
 
 	// we got correct key's type pair
 	// check what about crypt plugin for it
-	Remote::ParsedList clientPlugins;
-	REMOTE_parseList(clientPlugins, getPortConfig()->getPlugins(Firebird::IPluginManager::TYPE_WIRE_CRYPT));
+	Firebird::ParsedList clientPlugins(getPortConfig()->getPlugins(Firebird::IPluginManager::TYPE_WIRE_CRYPT));
 	for (unsigned n = 0; n < clientPlugins.getCount(); ++n)
 	{
 		Firebird::PathName p(clientPlugins[n]);
@@ -1220,23 +1227,33 @@ bool rem_port::tryKeyType(const KnownServerKey& srvKey, InternalCryptKey* cryptK
 				Firebird::LocalStatus st;
 				Firebird::CheckStatusWrapper statusWrapper(&st);
 
-				// Looks like we've found correct crypt plugin and key for it
-				port_crypt_plugin = cp.plugin();
-				port_crypt_plugin->addRef();
+				// Pass IV to plugin
+				//const Firebird::UCharBuffer* specificData = srvKey.findSpecificData(p);
+				auto* specificData = srvKey.findSpecificData(p);
+				if (specificData)
+				{
+					cp.plugin()->setSpecificData(&statusWrapper, srvKey.type.c_str(),
+						specificData->getCount(), specificData->begin());
+					check(&st, isc_wish_list);
+				}
 
 				// Pass key to plugin
-				port_crypt_plugin->setKey(&statusWrapper, cryptKey);
+				cp.plugin()->setKey(&statusWrapper, cryptKey);
 				if (st.getState() & Firebird::IStatus::STATE_ERRORS)
 				{
 					Firebird::status_exception::raise(&st);
 				}
+
+				// Looks like we've found correct crypt plugin and key for it
+				port_crypt_plugin = cp.plugin();
+				port_crypt_plugin->addRef();
 
 				// Now it's time to notify server about choice done
 				// Notice - port_crypt_complete flag is not set still,
 				// therefore sent packet will be not encrypted
 				PACKET crypt;
 				crypt.p_operation = op_crypt;
-				setCStr(crypt.p_crypt.p_key, cryptKey->t.c_str());
+				setCStr(crypt.p_crypt.p_key, cryptKey->keyName.c_str());
 				setCStr(crypt.p_crypt.p_plugin, p.c_str());
 				send(&crypt);
 
@@ -1293,7 +1310,8 @@ Firebird::ICryptKey* SrvAuthBlock::newKey(Firebird::CheckStatusWrapper* status)
 	{
 		InternalCryptKey* k = FB_NEW InternalCryptKey;
 
-		k->t = pluginName.c_str();
+		k->keyName = pluginName.c_str();
+		WIRECRYPT_DEBUG(fprintf(stderr, "Srv: newkey %s\n", k->keyName.c_str());)
 		port->port_crypt_keys.push(k);
 		newKeys.push(k);
 
@@ -1576,7 +1594,7 @@ void InternalCryptKey::setSymmetric(Firebird::CheckStatusWrapper* status, const 
 	try
 	{
 		if (type)
-			t = type;
+			keyName = type;
 		encrypt.set(keyLength, key);
 		decrypt.clear();
 	}
@@ -1593,7 +1611,7 @@ void InternalCryptKey::setAsymmetric(Firebird::CheckStatusWrapper* status, const
 	try
 	{
 		if (type)
-			t = type;
+			keyName = type;
 		encrypt.set(encryptKeyLength, encryptKey);
 		decrypt.set(decryptKeyLength, decryptKey);
 	}

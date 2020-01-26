@@ -97,6 +97,7 @@ case "$build" in
     SHRLIB_EXT=dylib
     CPU_TYPE=x86_64
     EXPORT_SYMBOLS_STYLE=darwin
+    RAW_DEVICES_FLG=N
     ;;
 
   i*86-*-darwin*)
@@ -1250,8 +1251,8 @@ dnl common files for all posix hosts
 dnl TODO: fix "arch-specific/linux/" paths for common posix scripts with SVN
 for fb_tgt in $FB_TARGETS; do
 AC_CONFIG_FILES([
-gen/$fb_tgt/firebird/firebird.conf:builds/install/misc/firebird.conf.in
-gen/$fb_tgt/firebird/databases.conf:builds/install/misc/databases.conf.in
+gen/$fb_tgt/firebird/firebird.conf:builds/install/misc/firebird.conf
+gen/$fb_tgt/firebird/databases.conf:builds/install/misc/databases.conf
 gen/$fb_tgt/firebird/fbtrace.conf:src/utilities/ntrace/fbtrace.conf
 gen/$fb_tgt/firebird/intl/fbintl.conf:builds/install/misc/fbintl.conf
 gen/$fb_tgt/firebird/plugins.conf:builds/install/misc/plugins.conf
@@ -1369,9 +1370,6 @@ else
 	POSTFIX_INCLUDE=
 fi
 AC_SUBST(POSTFIX_INCLUDE)
-
-UDF_COMMENT="#"
-AC_SUBST(UDF_COMMENT)
 
 AC_CONFIG_FILES(
 gen/make.rules:${MAKE_SRC_DIR}/make.rules

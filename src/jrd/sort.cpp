@@ -804,6 +804,7 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 		case SKD_timestamp:
 		case SKD_sql_date:
 		case SKD_int64:
+		case SKD_int128:
 			*p ^= 1 << 7;
 			break;
 
@@ -818,15 +819,14 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 			break;
 
 		case SKD_dec64:
-			if (direction && !duplicateHandling)
+			fb_assert(false);		// diddleKey for Dec64/128 not tested on bigendians!
+			if (direction)
 			{
 				((Decimal64*) p)->makeKey(lwp);
 				*p ^= 1 << 7;
 			}
 			else if (!(key->skd_flags & SKD_separate_data))
 			{
-				fb_assert(false);
-
 				if (complement && n)
 				{
 					UCHAR* pp = p;
@@ -842,15 +842,13 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 
 		case SKD_dec128:
 			fb_assert(false);		// diddleKey for Dec64/128 not tested on bigendians!
-			if (direction && !duplicateHandling)
+			if (direction)
 			{
 				((Decimal128*) p)->makeKey(lwp);
 				*p ^= 1 << 7;
 			}
 			else if (!(key->skd_flags & SKD_separate_data))
 			{
-				fb_assert(false);
-
 				if (complement && n)
 				{
 					UCHAR* pp = p;
@@ -1047,6 +1045,24 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 				SWAP_LONGS(lwp[0], lwp[1], lw);
 			break;
 
+		case SKD_int128:
+			// INT128 fits in four long, and hence two swaps should happen
+			// here for the right order comparison using DO_32_COMPARE
+			if (!direction)
+			{
+				SWAP_LONGS(lwp[0], lwp[3], lw);
+				SWAP_LONGS(lwp[1], lwp[2], lw);
+			}
+
+			p[15] ^= 1 << 7;
+
+			if (direction)
+			{
+				SWAP_LONGS(lwp[0], lwp[3], lw);
+				SWAP_LONGS(lwp[1], lwp[2], lw);
+			}
+			break;
+
 #ifdef IEEE
 		case SKD_double:
 			if (!direction)
@@ -1114,15 +1130,13 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 #endif // IEEE
 
 		case SKD_dec64:
-			if (direction && !duplicateHandling)
+			if (direction)
 			{
 				((Decimal64*) p)->makeKey(lwp);
 				p[3] ^= 1 << 7;
 			}
 			else if (!(key->skd_flags & SKD_separate_data))
 			{
-				fb_assert(false);
-
 				if (complement && n)
 				{
 					UCHAR* pp = p;
@@ -1137,15 +1151,13 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 			break;
 
 		case SKD_dec128:
-			if (direction && !duplicateHandling)
+			if (direction)
 			{
 				((Decimal128*) p)->makeKey(lwp);
 				p[3] ^= 1 << 7;
 			}
 			else if (!(key->skd_flags & SKD_separate_data))
 			{
-				fb_assert(false);
-
 				if (complement && n)
 				{
 					UCHAR* pp = p;

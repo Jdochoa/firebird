@@ -64,6 +64,9 @@ Usage:
    WIRE_ENCRYPTED               | Encryption status of current connection.
                                 | Value is the same as for compression status above.
                                 |
+   WIRE_CRYPT_PLUGIN            | If connection is encrypted - returns name of current plugin,
+                                | otherwise NULL.
+                                |
    CLIENT_ADDRESS               | The wire protocol address and port number of remote client
                                 | represented as string. Value is IP address concatenated with
                                 | port number using the '/' separator character. Value is

@@ -959,6 +959,11 @@ static const struct {
 	{335545256, -901}, /* 936 invalid_decfloat_bind */
 	{335545257, -901}, /* 937 odd_hex_len */
 	{335545258, -901}, /* 938 invalid_hex_digit */
+	{335545259, -902}, /* 939 bind_err */
+	{335545260, -902}, /* 940 bind_statement */
+	{335545261, -901}, /* 941 bind_convert */
+	{335545262, -402}, /* 942 cannot_update_old_blob */
+	{335545263, -402}, /* 943 cannot_read_new_blob */
 	{335740929, -901}, /*   1 gfix_db_name */
 	{335740930, -901}, /*   2 gfix_invalid_sw */
 	{335740932, -901}, /*   4 gfix_incmp_sw */
@@ -1393,6 +1398,9 @@ static const struct {
 	{336986161, -901}, /*  49 fbsvcmgr_fp_read */
 	{336986162, -901}, /*  50 fbsvcmgr_fp_empty */
 	{336986164, -901}, /*  52 fbsvcmgr_bad_arg */
+	{336986170, -901}, /*  58 fbsvcmgr_info_limbo */
+	{336986171, -901}, /*  59 fbsvcmgr_limbo_state */
+	{336986172, -901}, /*  60 fbsvcmgr_limbo_advise */
 	{337051649, -901}, /*   1 utl_trusted_switch */
 	{337117213, -901}, /*  29 nbackup_missing_param */
 	{337117214, -901}, /*  30 nbackup_allowed_switches */

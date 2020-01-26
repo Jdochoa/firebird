@@ -1413,6 +1413,7 @@ string PascalGenerator::escapeName(string name, bool interfaceName)
 	if (name == "file" ||
 		name == "function" ||
 		name == "procedure" ||
+		name == "record" ||
 		name == "set" ||
 		name == "to" ||
 		name == "type")

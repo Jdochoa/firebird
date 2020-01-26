@@ -55,6 +55,7 @@ namespace fb_utils
 	int name_length_limit(const TEXT* const name, size_t bufsize);
 	bool readenv(const char* env_name, Firebird::string& env_value);
 	bool readenv(const char* env_name, Firebird::PathName& env_value);
+	bool setenv(const char* name, const char* value, bool overwrite);
 	int snprintf(char* buffer, size_t count, const char* format...);
 	char* cleanup_passwd(char* arg);
 	inline char* get_passwd(char* arg)
@@ -143,6 +144,10 @@ namespace fb_utils
 	unsigned int subStatus(const ISC_STATUS* in, unsigned int cin,
 						   const ISC_STATUS* sub, unsigned int csub) throw();
 	bool cmpStatus(unsigned int len, const ISC_STATUS* a, const ISC_STATUS* b) throw();
+	const ISC_STATUS* nextArg(const ISC_STATUS* v) throw();
+
+	// Check does vector contain particular code or not
+	bool containsErrorCode(const ISC_STATUS* v, ISC_STATUS code);
 
 	enum FetchPassResult {
 		FETCH_PASS_OK,
@@ -190,9 +195,6 @@ namespace fb_utils
 	// Returns next offset value
 	unsigned sqlTypeToDsc(unsigned prevOffset, unsigned sqlType, unsigned sqlLength,
 		unsigned* dtype, unsigned* len, unsigned* offset, unsigned* nullOffset);
-
-	// Check does vector contain particular code or not
-	bool containsErrorCode(const ISC_STATUS* v, ISC_STATUS code);
 
 	bool inline isNetworkError(ISC_STATUS code)
 	{

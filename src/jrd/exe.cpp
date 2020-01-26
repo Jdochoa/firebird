@@ -72,7 +72,7 @@
 #include "../jrd/intl.h"
 #include "../jrd/sbm.h"
 #include "../jrd/blb.h"
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../dsql/ExprNodes.h"
 #include "../dsql/StmtNodes.h"
 #include "../jrd/blb_proto.h"
@@ -395,7 +395,7 @@ void EXE_assignment(thread_db* tdbb, const ValueExprNode* to, dsc* from_desc, bo
 		if (DTYPE_IS_BLOB_OR_QUAD(from_desc->dsc_dtype) || DTYPE_IS_BLOB_OR_QUAD(to_desc->dsc_dtype))
 		{
 			// ASF: Don't let MOV_move call blb::move because MOV
-			// will not pass the destination field to blb::_move.
+			// will not pass the destination field to blb::move.
 
 			record_param* rpb = NULL;
 			USHORT fieldId = 0;
@@ -1093,11 +1093,11 @@ void EXE_execute_triggers(thread_db* tdbb,
 
 	if (!is_db_trigger && (!old_rec || !new_rec))
 	{
-		const Record* const record = old_rec ? old_rec : new_rec;
-		fb_assert(record && record->getFormat());
+		record_param* rpb = old_rpb ? old_rpb : new_rpb;
+		fb_assert(rpb && rpb->rpb_relation);
 		// copy the record
 		MemoryPool& pool = *tdbb->getDefaultPool();
-		null_rec = FB_NEW_POOL(pool) Record(pool, record->getFormat());
+		null_rec = FB_NEW_POOL(pool) Record(pool, MET_current(tdbb, rpb->rpb_relation));
 		// initialize all fields to missing
 		null_rec->nullify();
 	}

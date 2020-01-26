@@ -164,7 +164,7 @@ public:
 
 	~Win32Module();
 
-	void *findSymbol(const string&);
+	void *findSymbol(ISC_STATUS* status, const string&);
 
 private:
 	const HMODULE module;
@@ -246,7 +246,7 @@ Win32Module::~Win32Module()
 		FreeLibrary(module);
 }
 
-void* Win32Module::findSymbol(const string& symName)
+void* Win32Module::findSymbol(ISC_STATUS* status, const string& symName)
 {
 	FARPROC result = GetProcAddress(module, symName.c_str());
 	if (!result)
@@ -254,5 +254,13 @@ void* Win32Module::findSymbol(const string& symName)
 		string newSym = '_' + symName;
 		result = GetProcAddress(module, newSym.c_str());
 	}
+
+	if (!result && status)
+	{
+		status[0] = isc_arg_win32;
+		status[1] = GetLastError();
+		status[2] = isc_arg_end;
+	}
+
 	return (void*) result;
 }

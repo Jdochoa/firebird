@@ -245,8 +245,6 @@ void Config::enumerate(Firebird::Array<Config*>& replicas)
 
 	ConfigFile cfgFile(filename, ConfigFile::HAS_SUB_CONF | ConfigFile::NATIVE_ORDER | ConfigFile::CUSTOM_MACROS);
 
-	AutoPtr<Config> config(FB_NEW Config);
-
 	bool defaultFound = false, exactMatch = false;
 	const ConfigFile::Parameters& params = cfgFile.getParameters();
 	for (const auto& section : params)
@@ -255,6 +253,8 @@ void Config::enumerate(Firebird::Array<Config*>& replicas)
 			raiseError("Unknown section found in the configuration file");
 
 		PathName dbName(section.value.c_str());
+
+		AutoPtr<Config> config(FB_NEW Config);
 
 		const ConfigFile::Parameters& elements = section.sub->getParameters();
 		for (const auto& el : elements)

@@ -200,20 +200,11 @@ public:
 		if (dsqlScratch)
 			dsqlScratch->setTransaction(transaction);
 
-		try
-		{
-			if (checkPermission(tdbb, transaction))
-				tdbb->tdbb_flags |= TDBB_trusted_ddl;
+		const ULONG flag = checkPermission(tdbb, transaction) ? TDBB_trusted_ddl : 0;
 
-			execute(tdbb, dsqlScratch, transaction);
-		}
-		catch (...)
-		{
-			tdbb->tdbb_flags &= ~TDBB_trusted_ddl;
-			throw;
-		}
+		Firebird::AutoSetRestoreFlag<ULONG> trustedDdlFlag(&tdbb->tdbb_flags, flag, true);
 
-		tdbb->tdbb_flags &= ~TDBB_trusted_ddl;
+		execute(tdbb, dsqlScratch, transaction);
 	}
 
 	virtual DdlNode* dsqlPass(DsqlCompilerScratch* dsqlScratch)
@@ -532,7 +523,7 @@ public:
 	static const unsigned FLAG_DATE			= 0x20;
 	static const unsigned FLAG_DECFLOAT		= 0x40;
 	static const unsigned FLAG_VALUE		= 0x80;	// Full value area required in impure space.
-	static const unsigned FLAG_DECFIXED		= 0x100;
+	static const unsigned FLAG_INT128		= 0x100;
 
 	explicit ExprNode(Type aType, MemoryPool& pool)
 		: DmlNode(pool),

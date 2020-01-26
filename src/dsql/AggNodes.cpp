@@ -22,7 +22,7 @@
 #include "../dsql/AggNodes.h"
 #include "../dsql/ExprNodes.h"
 #include "../jrd/jrd.h"
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../jrd/btr.h"
 #include "../jrd/exe.h"
 #include "../jrd/tra.h"
@@ -510,8 +510,7 @@ DmlNode* AvgAggNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* c
 
 void AvgAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg, true);
 
 	if (desc->isNull())
 		return;
@@ -540,6 +539,11 @@ void AvgAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 		{
 			ERRD_post(Arg::Gds(isc_expression_eval_err) <<
 					  Arg::Gds(isc_dsql_agg2_wrongarg) << Arg::Str("AVG"));
+		}
+		else if (desc->dsc_dtype == dtype_int64 || desc->dsc_dtype == dtype_int128)
+		{
+			desc->dsc_dtype = dtype_int128;
+			desc->dsc_length = sizeof(Int128);
 		}
 		else if (DTYPE_IS_EXACT(desc->dsc_dtype))
 		{
@@ -585,15 +589,21 @@ void AvgAggNode::getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc)
 		return;
 	}
 
-	// In V6, the average of an exact type is computed in SINT64, rather than double as in prior
-	// releases.
 	switch (desc->dsc_dtype)
 	{
 		case dtype_short:
 		case dtype_long:
-		case dtype_int64:
 			desc->dsc_dtype = dtype_int64;
 			desc->dsc_length = sizeof(SINT64);
+			desc->dsc_sub_type = 0;
+			desc->dsc_flags = 0;
+			nodScale = desc->dsc_scale;
+			break;
+
+		case dtype_int64:
+		case dtype_int128:
+			desc->dsc_dtype = dtype_int128;
+			desc->dsc_length = sizeof(Int128);
 			desc->dsc_sub_type = 0;
 			desc->dsc_flags = 0;
 			nodScale = desc->dsc_scale;
@@ -698,11 +708,18 @@ dsc* AvgAggNode::aggExecute(thread_db* tdbb, jrd_req* request) const
 	SINT64 i;
 	double d;
 	Decimal128 dec;
+	Int128 i128;
 
 	if (!dialect1 && impure->vlu_desc.dsc_dtype == dtype_int64)
 	{
 		i = *((SINT64*) impure->vlu_desc.dsc_address) / impure->vlux_count;
 		temp.makeInt64(impure->vlu_desc.dsc_scale, &i);
+	}
+	else if (!dialect1 && impure->vlu_desc.dsc_dtype == dtype_int128)
+	{
+		i128.set(impure->vlux_count, 0);
+		i128 = ((Int128*) impure->vlu_desc.dsc_address)->div(i128, 0);
+		temp.makeInt128(impure->vlu_desc.dsc_scale, &i128);
 	}
 	else if (DTYPE_IS_DECFLOAT(impure->vlu_desc.dsc_dtype))
 	{
@@ -753,7 +770,7 @@ DmlNode* ListAggNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 
 void ListAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg);
 	desc->makeBlob(desc->getBlobSubType(), desc->getTextType());
 	desc->setNullable(true);
 }
@@ -998,8 +1015,7 @@ DmlNode* SumAggNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* c
 
 void SumAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg, true);
 
 	if (desc->isNull())
 		return;
@@ -1038,6 +1054,11 @@ void SumAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 		{
 			ERRD_post(Arg::Gds(isc_expression_eval_err) <<
 					  Arg::Gds(isc_dsql_agg2_wrongarg) << Arg::Str("SUM"));
+		}
+		else if (desc->dsc_dtype == dtype_int64 || desc->dsc_dtype == dtype_int128)
+		{
+			desc->dsc_dtype = dtype_int128;
+			desc->dsc_length = sizeof(Int128);
 		}
 		else if (DTYPE_IS_EXACT(desc->dsc_dtype))
 		{
@@ -1120,11 +1141,19 @@ void SumAggNode::getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc)
 		{
 			case dtype_short:
 			case dtype_long:
-			case dtype_int64:
 				desc->dsc_dtype = dtype_int64;
 				desc->dsc_length = sizeof(SINT64);
 				nodScale = desc->dsc_scale;
 				desc->dsc_flags = 0;
+				return;
+
+			case dtype_int64:
+			case dtype_int128:
+				desc->dsc_dtype = dtype_int128;
+				desc->dsc_length = sizeof(Int128);
+				desc->dsc_sub_type = 0;
+				desc->dsc_flags = 0;
+				nodScale = desc->dsc_scale;
 				return;
 
 			case dtype_unknown:
@@ -1249,8 +1278,7 @@ DmlNode* MaxMinAggNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch
 
 void MaxMinAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg, true);
 }
 
 void MaxMinAggNode::getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc)
@@ -1349,8 +1377,7 @@ void StdDevAggNode::parseArgs(thread_db* tdbb, CompilerScratch* csb, unsigned /*
 
 void StdDevAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg, true);
 
 	if (desc->isNull())
 		return;
@@ -1558,8 +1585,7 @@ void CorrAggNode::parseArgs(thread_db* tdbb, CompilerScratch* csb, unsigned /*co
 
 void CorrAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg, true);
 
 	if (desc->isNull())
 		return;
@@ -1835,8 +1861,7 @@ void RegrAggNode::parseArgs(thread_db* tdbb, CompilerScratch* csb, unsigned /*co
 
 void RegrAggNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg, true);
 
 	if (desc->isNull())
 		return;

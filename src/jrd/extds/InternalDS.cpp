@@ -30,7 +30,7 @@
 #include "../tra.h"
 #include "../common/dsc.h"
 #include "../../dsql/dsql.h"
-#include "../../dsql/sqlda_pub.h"
+#include "../firebird/impl/sqlda_pub.h"
 
 #include "../blb_proto.h"
 #include "../evl_proto.h"
@@ -187,6 +187,8 @@ void InternalConnection::attach(thread_db* tdbb)
 
 	m_sqlDialect = (attachment->att_database->dbb_flags & DBB_DB_SQL_dialect_3) ?
 					SQL_DIALECT_V6 : SQL_DIALECT_V5;
+
+	m_features = conFtrFB4;
 }
 
 void InternalConnection::doDetach(thread_db* tdbb)

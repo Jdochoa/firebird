@@ -32,9 +32,11 @@
 #include "../jrd/PreparedStatement.h"
 #include "../jrd/RandomGenerator.h"
 #include "../jrd/RuntimeStatistics.h"
+#include "../jrd/Coercion.h"
 
 #include "../common/classes/ByteChunk.h"
 #include "../common/classes/GenericMap.h"
+#include "../common/classes/QualifiedName.h"
 #include "../common/classes/SyncObject.h"
 #include "../common/classes/array.h"
 #include "../common/classes/stack.h"
@@ -91,14 +93,24 @@ namespace Jrd
 	class Validation;
 	class Applier;
 
+
 struct DSqlCacheItem
 {
+	DSqlCacheItem(MemoryPool& pool)
+		: key(pool),
+		  obsoleteMap(pool),
+		  lock(nullptr),
+		  locked(false)
+	{
+	}
+
+	Firebird::string key;
+	Firebird::GenericMap<Firebird::Pair<Firebird::Left<Firebird::QualifiedName, bool> > > obsoleteMap;
 	Lock* lock;
 	bool locked;
-	bool obsolete;
 };
 
-typedef Firebird::GenericMap<Firebird::Pair<Firebird::Left<
+typedef Firebird::GenericMap<Firebird::Pair<Firebird::Full<
 	Firebird::string, DSqlCacheItem> > > DSqlCache;
 
 
@@ -168,7 +180,7 @@ public:
 	CommitNumber getSnapshotForVersion(CommitNumber version_cn);
 
 private:
-	UInt32Bitmap m_snapshots;		// List of active snapshots as of the moment of time
+	Firebird::SparseBitmap<CommitNumber> m_snapshots;		// List of active snapshots as of the moment of time
 	CommitNumber m_lastCommit;		// CN_ACTIVE here means object is not populated
 	ULONG m_releaseCount;			// Release event counter when list was last updated
 	ULONG m_slots_used;				// Snapshot slots used when list was last updated
@@ -353,25 +365,34 @@ public:
 	class InitialOptions
 	{
 	public:
-		InitialOptions(const DatabaseOptions& options);
-
-		InitialOptions()
+		InitialOptions(MemoryPool& p)
+			: bindings(p)
 		{
 		}
 
 	public:
+		void setInitialOptions(thread_db* tdbb, const DatabaseOptions& options);
 		void resetAttachment(Attachment* attachment) const;
+
+		CoercionArray *getBindings()
+		{
+			return &bindings;
+		}
+
+		const CoercionArray *getBindings() const
+		{
+			return &bindings;
+		}
 
 	private:
 		Firebird::DecimalStatus decFloatStatus = Firebird::DecimalStatus::DEFAULT;
-		Firebird::DecimalBinding decFloatBinding = Firebird::DecimalBinding::DEFAULT;
+		CoercionArray bindings;
 
-		Firebird::TimeZoneUtil::Bind timeZoneBind = Firebird::TimeZoneUtil::BIND_NATIVE;
 		USHORT originalTimeZone = Firebird::TimeZoneUtil::GMT_ZONE;
 	};
 
 public:
-	static Attachment* create(Database* dbb, const InitialOptions* initialOptions);
+	static Attachment* create(Database* dbb);
 	static void destroy(Attachment* const attachment);
 
 	MemoryPool* const att_pool;					// Memory pool
@@ -419,6 +440,7 @@ public:
 	Firebird::StringMap att_context_vars;	// Context variables for the connection
 	Firebird::Stack<DdlTriggerContext*> ddlTriggersContext;	// Context variables for DDL trigger event
 	Firebird::string att_network_protocol;	// Network protocol used by client for connection
+	Firebird::PathName att_remote_crypt;	// Name of wire crypt plugin (if any)
 	Firebird::string att_remote_address;	// Protocol-specific address of remote client
 	SLONG att_remote_pid;					// Process id of remote client
 	ULONG att_remote_flags;					// Flags specific for server/client link
@@ -441,7 +463,8 @@ public:
 	ULONG att_ext_call_depth;				// external connection call depth, 0 for user attachment
 	TraceManager* att_trace_manager;		// Trace API manager
 
-	Firebird::TimeZoneUtil::Bind att_timezone_bind;
+	CoercionArray att_bindings;
+	CoercionArray* att_dest_bind;
 	USHORT att_original_timezone;
 	USHORT att_current_timezone;
 
@@ -466,7 +489,6 @@ public:
 	Firebird::Array<JrdStatement*>	att_dyn_req;			// internal dyn statements
 	Firebird::ICryptKeyCallback*	att_crypt_callback;		// callback for DB crypt
 	Firebird::DecimalStatus			att_dec_status;			// error handling and rounding
-	Firebird::DecimalBinding		att_dec_binding;		// use legacy datatype for DecFloat in outer world
 
 	jrd_req* findSystemRequest(thread_db* tdbb, USHORT id, USHORT which);
 
@@ -592,8 +614,29 @@ public:
 
 	UserId* getUserId(const Firebird::MetaName &userName);
 
+	const UserId* getEffectiveUserId() const
+	{
+		if (att_ss_user)
+			return att_ss_user;
+		return att_user;
+	}
+
+	UserId* getEffectiveUserId()
+	{
+		if (att_ss_user)
+			return att_ss_user;
+		return att_user;
+	}
+
+	void setInitialOptions(thread_db* tdbb, DatabaseOptions& options, bool newDb);
+	const CoercionArray* getInitialBindings() const
+	{
+		return att_initial_options.getBindings();
+	}
+
+
 private:
-	Attachment(MemoryPool* pool, Database* dbb, const InitialOptions* initialOptions);
+	Attachment(MemoryPool* pool, Database* dbb);
 	~Attachment();
 
 	class IdleTimer FB_FINAL :
@@ -635,8 +678,8 @@ private:
 
 inline bool Attachment::locksmith(thread_db* tdbb, SystemPrivilege sp) const
 {
-	return att_user && att_user->locksmith(tdbb, sp) ||
-			att_ss_user && att_ss_user->locksmith(tdbb, sp);
+	return (att_user && att_user->locksmith(tdbb, sp)) ||
+			(att_ss_user && att_ss_user->locksmith(tdbb, sp));
 }
 
 inline jrd_tra* Attachment::getSysTransaction()

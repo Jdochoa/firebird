@@ -23,7 +23,7 @@
 #ifndef DSQL_DDL_NODES_H
 #define DSQL_DDL_NODES_H
 
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../jrd/dyn.h"
 #include "../common/msg_encode.h"
 #include "../dsql/make_proto.h"
@@ -2254,6 +2254,16 @@ public:
 	bool silent;
 };
 
+
+template <>
+inline RecreateNode<CreateAlterUserNode, DropUserNode, isc_dsql_recreate_user_failed>::
+	RecreateNode(MemoryPool& p, CreateAlterUserNode* aCreateNode)
+		: DdlNode(p),
+		  createNode(aCreateNode),
+		  dropNode(p, createNode->name, createNode->plugin)
+	{
+		dropNode.silent = true;
+	}
 
 typedef RecreateNode<CreateAlterUserNode, DropUserNode, isc_dsql_recreate_user_failed>
 	RecreateUserNode;

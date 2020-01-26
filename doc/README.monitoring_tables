@@ -75,7 +75,12 @@ Monitoring tables
           0: normal
           1: stalled
           2: merge
-      - MON$CRYPT_PAGE (number of page being encrypted)
+      - MON$CRYPT_STATE (current encryption state)
+          0: not encrypted
+          1: encrypted
+          2: decrypt in progress
+          3: encrypt in progress
+      - MON$CRYPT_PAGE (number of page being encrypted / decrypted)
       - MON$OWNER (database owner name)
       - MON$SEC_DATABASE (security database)
 
@@ -109,6 +114,7 @@ Monitoring tables
       - MON$STATEMENT_TIMEOUT (statement timeout)
       - MON$WIRE_COMPRESSED (wire compression enabled/disabled)
       - MON$WIRE_ENCRYPTED (wire encryption enabled/disabled)
+      - MON$WIRE_CRYPT_PLUGIN (name of wire encryption plugin)
 
     MON$TRANSACTIONS (started transactions)
       - MON$TRANSACTION_ID (transaction ID)

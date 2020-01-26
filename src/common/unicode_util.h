@@ -128,6 +128,7 @@ public:
 		UCalendar* (U_EXPORT2* ucalOpen) (const UChar* zoneID, int32_t len, const char* locale, UCalendarType type,
 			UErrorCode* err);
 		void (U_EXPORT2* ucalClose) (UCalendar* cal);
+		void (U_EXPORT2* ucalSetAttribute) (UCalendar* cal, UCalendarAttribute attr, int32_t newValue);
 		void (U_EXPORT2* ucalSetMillis) (UCalendar* cal, UDate dateTime, UErrorCode* err);
 		int32_t (U_EXPORT2* ucalGet) (UCalendar* cal, UCalendarDateFields field, UErrorCode* err);
 		void (U_EXPORT2* ucalSetDateTime) (UCalendar* cal, int32_t year, int32_t month, int32_t date, int32_t hour,
@@ -175,6 +176,8 @@ public:
 	static INTL_BOOL utf8WellFormed(ULONG len, const UCHAR* str, ULONG* offending_position);
 	static INTL_BOOL utf16WellFormed(ULONG len, const USHORT* str, ULONG* offending_position);
 	static INTL_BOOL utf32WellFormed(ULONG len, const ULONG* str, ULONG* offending_position);
+
+	static void utf8Normalize(Firebird::UCharBuffer& data);
 
 	static ConversionICU& getConversionICU();
 	static ICU* loadICU(const Firebird::string& icuVersion, const Firebird::string& configInfo);

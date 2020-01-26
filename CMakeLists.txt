@@ -206,6 +206,7 @@ if (MINGW)
     set(CMAKE_STATIC_LIBRARY_PREFIX)
 
     add_definitions(-D_WIN32_WINNT=0x0600)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse4 -std=c++11")
 endif()
 
 if (UNIX)
@@ -259,6 +260,13 @@ if (WIN32)
             CACHE STRING "ICU extraction variable")
         execute_process(COMMAND ${ICU_EXTRACT})
     endif()
+
+	# determine icu version
+	foreach(v RANGE 63 83)
+		if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/extern/icu/icudt${v}l.dat)
+			set(ICU_VERSION ${v} CACHE STRING "ICU version")
+		endif()
+	endforeach()
 
     # zlib
     if (NOT ZLIB_EXTRACT)

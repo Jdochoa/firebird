@@ -23,7 +23,7 @@
 #ifndef DSQL_EXPR_NODES_H
 #define DSQL_EXPR_NODES_H
 
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../dsql/Nodes.h"
 #include "../dsql/NodePrinter.h"
 #include "../dsql/pass1_proto.h"
@@ -899,7 +899,8 @@ public:
 	explicit LiteralNode(MemoryPool& pool);
 
 	static DmlNode* parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* csb, const UCHAR blrOp);
-	static void genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc, bool negateValue);
+	static void genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc, bool negateValue, USHORT numStringLength = 0);
+	static void genNegZero(DsqlCompilerScratch* dsqlScratch, int prec);
 
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
 	virtual ValueExprNode* dsqlPass(DsqlCompilerScratch* dsqlScratch);
@@ -927,6 +928,7 @@ public:
 public:
 	const IntlString* dsqlStr;
 	dsc litDesc;
+	USHORT litNumStringLength;
 };
 
 

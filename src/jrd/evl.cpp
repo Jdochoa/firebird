@@ -80,7 +80,7 @@
 #include "../jrd/intl_classes.h"
 #include "../jrd/rse.h"
 #include "../jrd/sort.h"
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../jrd/tra.h"
 #include "../common/gdsassert.h"
 #include "../common/classes/auto.h"
@@ -432,8 +432,8 @@ void EVL_make_value(thread_db* tdbb, const dsc* desc, impure_value* value, Memor
 		value->vlu_misc.vlu_dec128 = *((Decimal128*) from.dsc_address);
 		return;
 
-	case dtype_dec_fixed:
-		value->vlu_misc.vlu_dec_fixed = *((DecimalFixed*) from.dsc_address);
+	case dtype_int128:
+		value->vlu_misc.vlu_int128 = *((Int128*) from.dsc_address);
 		return;
 
 	case dtype_sql_time:

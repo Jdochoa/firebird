@@ -43,7 +43,7 @@
 #include <sys/param.h>
 #endif
 
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../common/ThreadStart.h"
 #include "../jrd/license.h"
 #include "../remote/inet_proto.h"
@@ -6494,7 +6494,7 @@ static void add_other_params(rem_port* port, ClumpletWriter& dpb, const Paramete
 			if (!dpb.find(isc_dpb_utf8_filename))
 				ISC_utf8ToSystem(path);
 
-			dpb.insertPath(par.process_name, path);
+			dpb.insertString(par.process_name, path);
 		}
 	}
 
@@ -6538,7 +6538,7 @@ static void add_working_directory(ClumpletWriter& dpb, const PathName& node_name
 			ISC_utf8ToSystem(cwd);
 	}
 
-	dpb.insertPath(isc_dpb_working_directory, cwd);
+	dpb.insertString(isc_dpb_working_directory, cwd);
 }
 
 
@@ -7204,7 +7204,14 @@ static THREAD_ENTRY_DECLARE event_thread(THREAD_ENTRY_PARAM arg)
 		P_OP operation = op_void;
 		{	// scope
 			RefMutexGuard portGuard(*port->port_sync, FB_FUNCTION);
-			stuff = port->receive(&packet);
+			try
+			{
+				stuff = port->receive(&packet);
+			}
+			catch(status_exception&)
+			{
+				// ignore
+			}
 
 			operation = packet.p_operation;
 
@@ -7550,6 +7557,7 @@ static void authReceiveResponse(bool havePacket, ClntAuthBlock& cBlock, rem_port
 			break;
 		}
 
+		cBlock.resetDataFromPlugin();
 		cBlock.storeDataForPlugin(d->cstr_length, d->cstr_address);
 		HANDSHAKE_DEBUG(fprintf(stderr, "Cli: receiveResponse: authenticate(%s)\n", cBlock.plugins.name()));
 		if (cBlock.plugins.plugin()->authenticate(&s, &cBlock) == IAuth::AUTH_FAILED)
@@ -7614,6 +7622,7 @@ static void init(CheckStatusWrapper* status, ClntAuthBlock& cBlock, rem_port* po
 		authFillParametersBlock(cBlock, dpb, ps, port);
 
 		port->port_client_crypt_callback = cryptCallback;
+		cBlock.createCryptCallback(&port->port_client_crypt_callback);
 
 		// Make attach packet
 		P_ATCH* attach = &packet->p_atch;
@@ -8657,7 +8666,9 @@ static void cleanDpb(Firebird::ClumpletWriter& dpb, const ParametersSet* tags)
 
 
 RmtAuthBlock::RmtAuthBlock(const Firebird::AuthReader::AuthBlock& aBlock)
-	: rdr(*getDefaultMemoryPool(), aBlock), info(*getDefaultMemoryPool())
+	: buffer(*getDefaultMemoryPool(), aBlock),
+	  rdr(*getDefaultMemoryPool(), buffer),
+	  info(*getDefaultMemoryPool())
 {
 	FbLocalStatus st;
 	first(&st);
@@ -8732,7 +8743,8 @@ ClntAuthBlock::ClntAuthBlock(const Firebird::PathName* fileName, Firebird::Clump
 	  cliUserName(getPool()), cliPassword(getPool()), cliOrigUserName(getPool()),
 	  dataForPlugin(getPool()), dataFromPlugin(getPool()),
 	  cryptKeys(getPool()), dpbConfig(getPool()), dpbPlugins(getPool()),
-	  plugins(IPluginManager::TYPE_AUTH_CLIENT), authComplete(false), firstTime(true)
+	  plugins(IPluginManager::TYPE_AUTH_CLIENT), authComplete(false), firstTime(true),
+	  createdInterface(nullptr)
 {
 	if (dpb && tags)
 	{
@@ -8749,7 +8761,8 @@ ClntAuthBlock::ClntAuthBlock(const Firebird::PathName* fileName, Firebird::Clump
 			remAuthBlock.reset(FB_NEW RmtAuthBlock(plain));
 		}
 	}
-	resetClnt(fileName);
+	clntConfig = REMOTE_get_config(fileName, &dpbConfig);
+	resetClnt();
 }
 
 void ClntAuthBlock::resetDataFromPlugin()
@@ -8774,10 +8787,10 @@ void ClntAuthBlock::extractDataFromPluginTo(Firebird::ClumpletWriter& dpb,
 			fb_assert(tags->plugin_name && tags->plugin_list);
 
 			if (pluginName.hasData())
-				dpb.insertPath(tags->plugin_name, pluginName);
+				dpb.insertString(tags->plugin_name, pluginName);
 
 			dpb.deleteWithTag(tags->plugin_list);
-			dpb.insertPath(tags->plugin_list, pluginList);
+			dpb.insertString(tags->plugin_list, pluginList);
 			firstTime = false;
 			HANDSHAKE_DEBUG(fprintf(stderr,
 				"Cli: extractDataFromPluginTo: first time - added plugName & pluginList\n"));
@@ -8927,8 +8940,7 @@ int ClntAuthBlock::release()
 
 bool ClntAuthBlock::checkPluginName(Firebird::PathName& nameToCheck)
 {
-	Remote::ParsedList parsed;
-	REMOTE_parseList(parsed, pluginList);
+	Firebird::ParsedList parsed(pluginList);
 	for (unsigned i = 0; i < parsed.getCount(); ++i)
 	{
 		if (parsed[i] == nameToCheck)
@@ -8947,7 +8959,8 @@ Firebird::ICryptKey* ClntAuthBlock::newKey(CheckStatusWrapper* status)
 		InternalCryptKey* k = FB_NEW InternalCryptKey;
 
 		fb_assert(plugins.hasData());
-		k->t = plugins.name();
+		k->keyName = plugins.name();
+		WIRECRYPT_DEBUG(fprintf(stderr, "Cli: newkey %s\n", k->keyName.c_str());)
 		cryptKeys.add(k);
 
 		return k;
@@ -8961,7 +8974,7 @@ Firebird::ICryptKey* ClntAuthBlock::newKey(CheckStatusWrapper* status)
 
 void ClntAuthBlock::tryNewKeys(rem_port* port)
 {
-	for (unsigned k = 0; k < cryptKeys.getCount(); ++k)
+	for (unsigned k = cryptKeys.getCount(); k--; )
 	{
 		if (port->tryNewKey(cryptKeys[k]))
 		{
@@ -8980,4 +8993,65 @@ void ClntAuthBlock::releaseKeys(unsigned from)
 	{
 		delete cryptKeys[from++];
 	}
+}
+
+void ClntAuthBlock::createCryptCallback(Firebird::ICryptKeyCallback** callback)
+{
+	if (*callback)
+		return;
+
+	*callback = clientCrypt.create(clntConfig);
+	if (*callback)
+		createdInterface = callback;
+}
+
+Firebird::ICryptKeyCallback* ClntAuthBlock::ClientCrypt::create(const Config* conf)
+{
+	pluginItr.set(conf);
+
+	return pluginItr.hasData() ? this : nullptr;
+}
+
+unsigned ClntAuthBlock::ClientCrypt::callback(unsigned dlen, const void* data, unsigned blen, void* buffer)
+{
+	HANDSHAKE_DEBUG(fprintf(stderr, "dlen=%d blen=%d\n", dlen, blen));
+
+	int loop = 0;
+	while (loop < 2)
+	{
+		for (; pluginItr.hasData(); pluginItr.next())
+		{
+			if (!currentIface)
+			{
+				LocalStatus ls;
+				CheckStatusWrapper st(&ls);
+
+				HANDSHAKE_DEBUG(fprintf(stderr, "Try plugin %s\n", pluginItr.name()));
+				currentIface = pluginItr.plugin()->chainHandle(&st);
+				// if plugin does not support chaining - silently ignore it
+				check(&st, isc_wish_list);
+				HANDSHAKE_DEBUG(fprintf(stderr, "Use plugin %s, ptr=%p\n", pluginItr.name(), currentIface));
+			}
+
+			// if we have an iface - try it
+			if (currentIface)
+			{
+				unsigned retlen = currentIface->callback(dlen, data, blen, buffer);
+				HANDSHAKE_DEBUG(fprintf(stderr, "Iface %p returned %d\n", currentIface, retlen));
+				if (retlen)
+					return retlen;
+			}
+
+			// no success with iface - clear it
+			// appropriate data structures to be released by plugin cleanup code
+			currentIface = nullptr;
+		}
+
+		++loop;
+		// prepare iterator for next use
+		pluginItr.rewind();
+	}
+
+	// no luck with suggested data
+	return 0;
 }

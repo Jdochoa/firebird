@@ -28,7 +28,7 @@
 #include "../dsql/BoolNodes.h"
 #include "../dsql/StmtNodes.h"
 #include "../jrd/align.h"
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../jrd/tra.h"
 #include "../jrd/Function.h"
 #include "../jrd/SysFunction.h"
@@ -506,17 +506,19 @@ namespace
 const UCHAR DSC_ZTYPE_FLT64 = 0;
 const UCHAR DSC_ZTYPE_FLT128 = 1;
 const UCHAR DSC_ZTYPE_FIXED = 2;
-const UCHAR DSC_ZTYPE_INT = 3;
-const UCHAR DSC_ZTYPE_OTHER = 4;
-const UCHAR DSC_ZTYPE_BAD = 5;
+const UCHAR DSC_ZTYPE_INT64 = 3;
+const UCHAR DSC_ZTYPE_INT = 4;
+const UCHAR DSC_ZTYPE_OTHER = 5;
+const UCHAR DSC_ZTYPE_BAD = 6;
 
-const UCHAR decimalDescTable[5][5] = {
-/*							 DSC_ZTYPE_FLT64	DSC_ZTYPE_FLT128	DSC_ZTYPE_FIXED		DSC_ZTYPE_INT		DSC_ZTYPE_OTHER	*/
-/*	DSC_ZTYPE_FLT64		*/	{DSC_ZTYPE_FLT64,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128},
-/*	DSC_ZTYPE_FLT128	*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128},
-/*	DSC_ZTYPE_FIXED		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_FLT128},
-/*	DSC_ZTYPE_INT		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD},
-/*	DSC_ZTYPE_OTHER		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD}
+const UCHAR decimalDescTable[6][6] = {
+/*							 DSC_ZTYPE_FLT64	DSC_ZTYPE_FLT128	DSC_ZTYPE_FIXED		DSC_ZTYPE_INT64		DSC_ZTYPE_INT		DSC_ZTYPE_OTHER	*/
+/*	DSC_ZTYPE_FLT64		*/	{DSC_ZTYPE_FLT64,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128},
+/*	DSC_ZTYPE_FLT128	*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128},
+/*	DSC_ZTYPE_FIXED		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_FLT128},
+/*	DSC_ZTYPE_INT64		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD},
+/*	DSC_ZTYPE_INT		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FIXED,	DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD},
+/*	DSC_ZTYPE_OTHER		*/	{DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_FLT128,	DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD,		DSC_ZTYPE_BAD}
 };
 
 UCHAR getFType(const dsc& desc)
@@ -527,8 +529,10 @@ UCHAR getFType(const dsc& desc)
 		return DSC_ZTYPE_FLT64;
 	case dtype_dec128:
 		return DSC_ZTYPE_FLT128;
-	case dtype_dec_fixed:
+	case dtype_int128:
 		return DSC_ZTYPE_FIXED;
+	case dtype_int64:
+		return DSC_ZTYPE_INT64;
 	}
 
 	if (DTYPE_IS_EXACT(desc.dsc_dtype))
@@ -547,7 +551,7 @@ unsigned setDecDesc(dsc* desc, const dsc& desc1, const dsc& desc2, Scaling sc, S
 		zipType = DSC_ZTYPE_FLT128;		// In production case fallback to Decimal128
 
 	desc->dsc_dtype = zipType == DSC_ZTYPE_FLT64 ? dtype_dec64 :
-		zipType == DSC_ZTYPE_FLT128 ? dtype_dec128 : dtype_dec_fixed;
+		zipType == DSC_ZTYPE_FLT128 ? dtype_dec128 : dtype_int128;
 	desc->dsc_sub_type = 0;
 	desc->dsc_flags = (desc1.dsc_flags | desc2.dsc_flags) & DSC_nullable;
 	desc->dsc_scale = 0;
@@ -569,9 +573,9 @@ unsigned setDecDesc(dsc* desc, const dsc& desc1, const dsc& desc2, Scaling sc, S
 		*nodScale = desc->dsc_scale;
 
 	desc->dsc_length = zipType == DSC_ZTYPE_FLT64 ? sizeof(Decimal64) :
-		zipType == DSC_ZTYPE_FLT128 ? sizeof(Decimal128) : sizeof(DecimalFixed);
+		zipType == DSC_ZTYPE_FLT128 ? sizeof(Decimal128) : sizeof(Int128);
 
-	return zipType == DSC_ZTYPE_FIXED ? ExprNode::FLAG_DECFIXED : ExprNode::FLAG_DECFLOAT;
+	return zipType == DSC_ZTYPE_FIXED ? ExprNode::FLAG_INT128 : ExprNode::FLAG_DECFLOAT;
 }
 
 } // anon namespace
@@ -580,8 +584,8 @@ void ArithmeticNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc desc1, desc2;
 
-	MAKE_desc(dsqlScratch, &desc1, arg1);
-	MAKE_desc(dsqlScratch, &desc2, arg2);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc1, arg1);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc2, arg2);
 
 	if (desc1.isNull())
 	{
@@ -764,7 +768,7 @@ void ArithmeticNode::makeDialect1(dsc* desc, dsc& desc1, dsc& desc2)
 
 				case dtype_dec64:
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					setDecDesc(desc, desc1, desc2, SCALE_MIN);
 					break;
 
@@ -792,7 +796,7 @@ void ArithmeticNode::makeDialect1(dsc* desc, dsc& desc1, dsc& desc2)
 			switch (dtype)
 			{
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					setDecDesc(desc, desc1, desc2, SCALE_SUM);
 					break;
 
@@ -887,8 +891,8 @@ void ArithmeticNode::makeDialect3(dsc* desc, dsc& desc1, dsc& desc2)
 			// <timestamp> arithmetic, but returns a <double>
 			if (DTYPE_IS_EXACT(dtype1) && DTYPE_IS_EXACT(dtype2))
 			{
-				if (desc1.isDecFixed() || desc2.isDecFixed())
-					dtype = dtype_dec_fixed;
+				if (desc1.isInt128() || desc2.isInt128())
+					dtype = dtype_int128;
 				else
 					dtype = dtype_int64;
 			}
@@ -1027,7 +1031,7 @@ void ArithmeticNode::makeDialect3(dsc* desc, dsc& desc1, dsc& desc2)
 
 				case dtype_dec64:
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					setDecDesc(desc, desc1, desc2, SCALE_MIN);
 					break;
 
@@ -1076,7 +1080,7 @@ void ArithmeticNode::makeDialect3(dsc* desc, dsc& desc1, dsc& desc2)
 
 			switch (dtype)
 			{
-				case dtype_dec_fixed:
+				case dtype_int128:
 				case dtype_dec128:
 					setDecDesc(desc, desc1, desc2, SCALE_SUM);
 					break;
@@ -1135,7 +1139,7 @@ void ArithmeticNode::makeDialect3(dsc* desc, dsc& desc1, dsc& desc2)
 					break;
 
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					setDecDesc(desc, desc1, desc2, SCALE_SUM);
 					break;
 
@@ -1347,7 +1351,7 @@ void ArithmeticNode::getDescDialect1(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 
 				case dtype_dec64:
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					nodFlags |= setDecDesc(desc, desc1, desc2, SCALE_MIN, &nodScale);
 					break;
 
@@ -1394,7 +1398,7 @@ void ArithmeticNode::getDescDialect1(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 					return;
 
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					nodFlags |= setDecDesc(desc, desc1, desc2, SCALE_SUM, &nodScale);
 					break;
 
@@ -1469,8 +1473,8 @@ void ArithmeticNode::getDescDialect3(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 
 			if (DTYPE_IS_EXACT(dtype1) && DTYPE_IS_EXACT(dtype2))
 			{
-				if (desc1.isDecFixed() || desc2.isDecFixed())
-					dtype = dtype_dec_fixed;
+				if (desc1.isInt128() || desc2.isInt128())
+					dtype = dtype_int128;
 				else
 					dtype = dtype_int64;
 			}
@@ -1620,7 +1624,7 @@ void ArithmeticNode::getDescDialect3(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 
 				case dtype_dec64:
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					nodFlags |= setDecDesc(desc, desc1, desc2, SCALE_MIN, &nodScale);
 					return;
 
@@ -1674,7 +1678,7 @@ void ArithmeticNode::getDescDialect3(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 					return;
 
 				case dtype_dec128:
-				case dtype_dec_fixed:
+				case dtype_int128:
 					nodFlags |= setDecDesc(desc, desc1, desc2, SCALE_SUM, &nodScale);
 					return;
 
@@ -1900,23 +1904,6 @@ dsc* ArithmeticNode::add(thread_db* tdbb, const dsc* desc, impure_value* value, 
 		return result;
 	}
 
-	if (node->nodFlags & FLAG_DECFIXED)
-	{
-		const DecimalFixed d1 = MOV_get_dec_fixed(tdbb, desc, node->nodScale);
-		const DecimalFixed d2 = MOV_get_dec_fixed(tdbb, &value->vlu_desc, node->nodScale);
-
-		DecimalStatus decSt = tdbb->getAttachment()->att_dec_status;
-		value->vlu_misc.vlu_dec_fixed = (blrOp == blr_subtract) ? d2.sub(decSt, d1) : d1.add(decSt, d2);
-
-		result->dsc_dtype = dtype_dec_fixed;
-		result->dsc_length = sizeof(DecimalFixed);
-		result->dsc_scale = node->nodScale;
-		result->dsc_sub_type = 0;
-		result->dsc_address = (UCHAR*) &value->vlu_misc.vlu_dec_fixed;
-
-		return result;
-	}
-
 	// Handle floating arithmetic
 
 	if (node->nodFlags & FLAG_DOUBLE)
@@ -1996,19 +1983,20 @@ dsc* ArithmeticNode::add2(thread_db* tdbb, const dsc* desc, impure_value* value,
 		return result;
 	}
 
-	if (node->nodFlags & FLAG_DECFIXED)
+	// 128-bit arithmetic
+
+	if (node->nodFlags & FLAG_INT128)
 	{
-		const DecimalFixed d1 = MOV_get_dec_fixed(tdbb, desc, node->nodScale);
-		const DecimalFixed d2 = MOV_get_dec_fixed(tdbb, &value->vlu_desc, node->nodScale);
+		const Int128 d1 = MOV_get_int128(tdbb, desc, node->nodScale);
+		const Int128 d2 = MOV_get_int128(tdbb, &value->vlu_desc, node->nodScale);
 
-		DecimalStatus decSt = tdbb->getAttachment()->att_dec_status;
-		value->vlu_misc.vlu_dec_fixed = (blrOp == blr_subtract) ? d2.sub(decSt, d1) : d1.add(decSt, d2);
+		value->vlu_misc.vlu_int128 = (blrOp == blr_subtract) ? d2.sub(d1) : d1.add(d2);
 
-		result->dsc_dtype = dtype_dec_fixed;
-		result->dsc_length = sizeof(DecimalFixed);
+		result->dsc_dtype = dtype_int128;
+		result->dsc_length = sizeof(Int128);
 		result->dsc_scale = node->nodScale;
 		result->dsc_sub_type = 0;
-		result->dsc_address = (UCHAR*) &value->vlu_misc.vlu_dec_fixed;
+		result->dsc_address = (UCHAR*) &value->vlu_misc.vlu_int128;
 
 		return result;
 	}
@@ -2099,19 +2087,20 @@ dsc* ArithmeticNode::multiply(const dsc* desc, impure_value* value) const
 		return &value->vlu_desc;
 	}
 
-	if (nodFlags & FLAG_DECFIXED)
+	// 128-bit arithmetic
+
+	if (nodFlags & FLAG_INT128)
 	{
-		const DecimalFixed d1 = MOV_get_dec_fixed(tdbb, desc, nodScale);
-		const DecimalFixed d2 = MOV_get_dec_fixed(tdbb, &value->vlu_desc, nodScale);
+		const Int128 d1 = MOV_get_int128(tdbb, desc, nodScale);
+		const Int128 d2 = MOV_get_int128(tdbb, &value->vlu_desc, nodScale);
 
-		DecimalStatus decSt = tdbb->getAttachment()->att_dec_status;
-		value->vlu_misc.vlu_dec_fixed = d1.mul(decSt, d2);
+		value->vlu_misc.vlu_int128 = d1.mul(d2);
 
-		value->vlu_desc.dsc_dtype = dtype_dec_fixed;
-		value->vlu_desc.dsc_length = sizeof(DecimalFixed);
+		value->vlu_desc.dsc_dtype = dtype_int128;
+		value->vlu_desc.dsc_length = sizeof(Int128);
 		value->vlu_desc.dsc_scale = nodScale;
 		value->vlu_desc.dsc_sub_type = 0;
-		value->vlu_desc.dsc_address = (UCHAR*) &value->vlu_misc.vlu_dec_fixed;
+		value->vlu_desc.dsc_address = (UCHAR*) &value->vlu_misc.vlu_int128;
 
 		return &value->vlu_desc;
 	}
@@ -2210,20 +2199,21 @@ dsc* ArithmeticNode::multiply2(const dsc* desc, impure_value* value) const
 		return &value->vlu_desc;
 	}
 
-	if (nodFlags & FLAG_DECFIXED)
+	// 128-bit arithmetic
+
+	if (nodFlags & FLAG_INT128)
 	{
 		const SSHORT scale = NUMERIC_SCALE(*desc);
-		const DecimalFixed d1 = MOV_get_dec_fixed(tdbb, desc, scale);
-		const DecimalFixed d2 = MOV_get_dec_fixed(tdbb, &value->vlu_desc, nodScale - scale);
+		const Int128 d1 = MOV_get_int128(tdbb, desc, scale);
+		const Int128 d2 = MOV_get_int128(tdbb, &value->vlu_desc, nodScale - scale);
 
-		DecimalStatus decSt = tdbb->getAttachment()->att_dec_status;
-		value->vlu_misc.vlu_dec_fixed = d1.mul(decSt, d2);
+		value->vlu_misc.vlu_int128 = d1.mul(d2);
 
-		value->vlu_desc.dsc_dtype = dtype_dec_fixed;
-		value->vlu_desc.dsc_length = sizeof(DecimalFixed);
+		value->vlu_desc.dsc_dtype = dtype_int128;
+		value->vlu_desc.dsc_length = sizeof(Int128);
 		value->vlu_desc.dsc_scale = nodScale;
 		value->vlu_desc.dsc_sub_type = 0;
-		value->vlu_desc.dsc_address = (UCHAR*) &value->vlu_misc.vlu_dec_fixed;
+		value->vlu_desc.dsc_address = (UCHAR*) &value->vlu_misc.vlu_int128;
 
 		return &value->vlu_desc;
 	}
@@ -2324,20 +2314,21 @@ dsc* ArithmeticNode::divide2(const dsc* desc, impure_value* value) const
 		return &value->vlu_desc;
 	}
 
-	if (nodFlags & FLAG_DECFIXED)
+	// 128-bit arithmetic
+
+	if (nodFlags & FLAG_INT128)
 	{
 		const SSHORT scale = NUMERIC_SCALE(*desc);
-		const DecimalFixed d2 = MOV_get_dec_fixed(tdbb, desc, scale);
-		const DecimalFixed d1 = MOV_get_dec_fixed(tdbb, &value->vlu_desc, nodScale - scale);
+		const Int128 d2 = MOV_get_int128(tdbb, desc, scale);
+		const Int128 d1 = MOV_get_int128(tdbb, &value->vlu_desc, nodScale - scale);
 
-		DecimalStatus decSt = tdbb->getAttachment()->att_dec_status;
-		value->vlu_misc.vlu_dec_fixed = d1.div(decSt, d2, scale * 2);
+		value->vlu_misc.vlu_int128 = d1.div(d2, scale * 2);
 
-		value->vlu_desc.dsc_dtype = dtype_dec_fixed;
-		value->vlu_desc.dsc_length = sizeof(DecimalFixed);
+		value->vlu_desc.dsc_dtype = dtype_int128;
+		value->vlu_desc.dsc_length = sizeof(Int128);
 		value->vlu_desc.dsc_scale = nodScale;
 		value->vlu_desc.dsc_sub_type = 0;
-		value->vlu_desc.dsc_address = (UCHAR*) &value->vlu_misc.vlu_dec_fixed;
+		value->vlu_desc.dsc_address = (UCHAR*) &value->vlu_misc.vlu_int128;
 
 		return &value->vlu_desc;
 	}
@@ -3103,10 +3094,10 @@ void AtNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 void AtNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc dateTimeDesc, zoneDesc;
-	MAKE_desc(dsqlScratch, &dateTimeDesc, dateTimeArg);
+	DsqlDescMaker::fromNode(dsqlScratch, &dateTimeDesc, dateTimeArg);
 
 	if (zoneArg)
-		MAKE_desc(dsqlScratch, &zoneDesc, zoneArg);
+		DsqlDescMaker::fromNode(dsqlScratch, &zoneDesc, zoneArg);
 	else
 	{
 		zoneDesc.clear();
@@ -3356,8 +3347,8 @@ ValueExprNode* CastNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	DDL_resolve_intl_type(dsqlScratch, node->dsqlField, NULL);
 	node->setParameterType(dsqlScratch, NULL, false);
 
-	MAKE_desc_from_field(&node->castDesc, node->dsqlField);
-	MAKE_desc(dsqlScratch, &node->source->nodDesc, node->source);
+	DsqlDescMaker::fromField(&node->castDesc, node->dsqlField);
+	DsqlDescMaker::fromNode(dsqlScratch, &node->source->nodDesc, node->source);
 
 	node->castDesc.dsc_flags = node->source->nodDesc.dsc_flags & DSC_nullable;
 
@@ -3383,7 +3374,7 @@ bool CastNode::setParameterType(DsqlCompilerScratch* /*dsqlScratch*/,
 		if (parameter)
 		{
 			parameter->par_node = source;
-			MAKE_desc_from_field(&parameter->par_desc, dsqlField);
+			DsqlDescMaker::fromField(&parameter->par_desc, dsqlField);
 			if (!dsqlField->fullDomain)
 				parameter->par_desc.setNullable(true);
 			return true;
@@ -3560,10 +3551,7 @@ dsc* CastNode::execute(thread_db* tdbb, jrd_req* request) const
 	if (!value)
 		return NULL;
 
-	if (DTYPE_IS_BLOB(value->dsc_dtype) || DTYPE_IS_BLOB(impure->vlu_desc.dsc_dtype))
-		blb::move(tdbb, value, &impure->vlu_desc);
-	else
-		MOV_move(tdbb, value, &impure->vlu_desc);
+	MOV_move(tdbb, value, &impure->vlu_desc);
 
 	if (impure->vlu_desc.dsc_dtype == dtype_text)
 		INTL_adjust_text_descriptor(tdbb, &impure->vlu_desc);
@@ -3600,9 +3588,8 @@ ValueExprNode* CoalesceNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 
 	node->make(dsqlScratch, &node->nodDesc);	// Set descriptor for output node.
 
-	node->setParameterType(dsqlScratch,
-		[&] (dsc* desc) { *desc = node->nodDesc; },
-		false);
+	for (auto& item : node->args->items)
+		PASS1_set_parameter_type(dsqlScratch, item, node, false);
 
 	return node;
 }
@@ -3615,12 +3602,7 @@ void CoalesceNode::setParameterName(dsql_par* parameter) const
 bool CoalesceNode::setParameterType(DsqlCompilerScratch* dsqlScratch,
 	std::function<void (dsc*)> makeDesc, bool /*forceVarChar*/)
 {
-	bool ret = false;
-
-	for (auto& item : args->items)
-		ret |= PASS1_set_parameter_type(dsqlScratch, item, makeDesc, false);
-
-	return ret;
+	return false;
 }
 
 void CoalesceNode::genBlr(DsqlCompilerScratch* dsqlScratch)
@@ -3639,7 +3621,7 @@ void CoalesceNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void CoalesceNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc_from_list(dsqlScratch, desc, args, "COALESCE");
+	DsqlDescMaker::fromList(dsqlScratch, desc, args, "COALESCE");
 }
 
 void CoalesceNode::getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc)
@@ -3730,7 +3712,7 @@ ValueExprNode* CollateNode::pass1Collate(DsqlCompilerScratch* dsqlScratch, Value
 	dsql_fld* field = FB_NEW_POOL(pool) dsql_fld(pool);
 	CastNode* castNode = FB_NEW_POOL(pool) CastNode(pool, input, field);
 
-	MAKE_desc(dsqlScratch, &input->nodDesc, input);
+	DsqlDescMaker::fromNode(dsqlScratch, &input->nodDesc, input);
 
 	if (input->nodDesc.dsc_dtype <= dtype_any_text ||
 		(input->nodDesc.dsc_dtype == dtype_blob && input->nodDesc.dsc_sub_type == isc_blob_text))
@@ -3746,7 +3728,7 @@ ValueExprNode* CollateNode::pass1Collate(DsqlCompilerScratch* dsqlScratch, Value
 	}
 
 	DDL_resolve_intl_type(dsqlScratch, field, collation);
-	MAKE_desc_from_field(&castNode->castDesc, field);
+	DsqlDescMaker::fromField(&castNode->castDesc, field);
 
 	return castNode;
 }
@@ -3831,8 +3813,8 @@ void ConcatenateNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc desc1, desc2;
 
-	MAKE_desc(dsqlScratch, &desc1, arg1);
-	MAKE_desc(dsqlScratch, &desc2, arg2);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc1, arg1);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc2, arg2);
 
 	if (desc1.isNull())
 	{
@@ -4685,7 +4667,7 @@ bool DecodeNode::setParameterType(DsqlCompilerScratch* dsqlScratch,
 			++i;
 		}
 
-		MAKE_desc_from_list(dsqlScratch, &node1Desc, node1, label.c_str());
+		DsqlDescMaker::fromList(dsqlScratch, &node1Desc, node1, label.c_str());
 
 		if (!node1Desc.isUnknown())
 		{
@@ -4731,8 +4713,7 @@ void DecodeNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void DecodeNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc_from_list(dsqlScratch, desc, values, label.c_str());
-	desc->setNullable(true);
+	DsqlDescMaker::fromList(dsqlScratch, desc, values, label.c_str(), true);
 }
 
 void DecodeNode::getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc)
@@ -5247,7 +5228,7 @@ ValueExprNode* ExtractNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	// sure the requested type of information can be extracted.
 
 	ValueExprNode* sub1 = doDsqlPass(dsqlScratch, arg);
-	MAKE_desc(dsqlScratch, &sub1->nodDesc, sub1);
+	DsqlDescMaker::fromNode(dsqlScratch, &sub1->nodDesc, sub1);
 
 	switch (blrSubOp)
 	{
@@ -5319,7 +5300,7 @@ void ExtractNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 void ExtractNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc desc1;
-	MAKE_desc(dsqlScratch, &desc1, arg);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc1, arg);
 
 	switch (blrSubOp)
 	{
@@ -5452,7 +5433,7 @@ dsc* ExtractNode::execute(thread_db* tdbb, jrd_req* request) const
 				case blr_extract_second:
 				case blr_extract_millisecond:
 					TimeZoneUtil::decodeTime(*(ISC_TIME_TZ*) value->dsc_address,
-						&EngineCallbacks::instance, &times, &fractions);
+						false, &EngineCallbacks::instance, &times, &fractions);
 					break;
 
 				case blr_extract_timezone_hour:
@@ -5512,7 +5493,7 @@ dsc* ExtractNode::execute(thread_db* tdbb, jrd_req* request) const
 					break;
 
 				default:
-					TimeZoneUtil::decodeTimeStamp(*(ISC_TIMESTAMP_TZ*) value->dsc_address, &times, &fractions);
+					TimeZoneUtil::decodeTimeStamp(*(ISC_TIMESTAMP_TZ*) value->dsc_address, false, &times, &fractions);
 			}
 			break;
 
@@ -6925,7 +6906,7 @@ void GenIdNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 	if (!implicit)
 	{
 		dsc desc1;
-		MAKE_desc(dsqlScratch, &desc1, arg);
+		DsqlDescMaker::fromNode(dsqlScratch, &desc1, arg);
 	}
 
 	if (dialect1)
@@ -7323,7 +7304,7 @@ static RegisterNode<LiteralNode> regLiteralNode(blr_literal);
 
 LiteralNode::LiteralNode(MemoryPool& pool)
 	: TypedNode<ValueExprNode, ExprNode::TYPE_LITERAL>(pool),
-	  dsqlStr(NULL)
+	  dsqlStr(NULL), litNumStringLength(0)
 {
 	litDesc.clear();
 }
@@ -7337,8 +7318,8 @@ DmlNode* LiteralNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 
 	USHORT l = node->litDesc.dsc_length;
 	USHORT dataLen = l;
-	if (node->litDesc.dsc_dtype == dtype_double && dataLen < sizeof(Decimal128))
-		dataLen = sizeof(Decimal128);
+	if (dataLen < sizeof(Decimal128))
+		dataLen = sizeof(Decimal128);	// we anyway have min.allocation size == 16
 	UCHAR* p = FB_NEW_POOL(csb->csb_pool) UCHAR[dataLen];
 	node->litDesc.dsc_address = p;
 	node->litDesc.dsc_flags = 0;
@@ -7392,18 +7373,19 @@ DmlNode* LiteralNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 
 		case dtype_double:
 		case dtype_dec128:
+		case dtype_int128:
 		{
-			SSHORT scale;
-			UCHAR dtype;
-
 			// The double literal could potentially be used for any numeric literal - the value is
 			// passed as if it were a text string. Convert the numeric string to its binary value
 			// (int64, long or double as appropriate).
 
 			l = csb->csb_blr_reader.getWord();
 			q = csb->csb_blr_reader.getPos();
-			dtype = CVT_get_numeric(q, l, &scale, p);
+			SSHORT scale = 0;
+			UCHAR dtype = CVT_get_numeric(q, l, &scale, p);
 			node->litDesc.dsc_dtype = dtype;
+			node->dsqlStr = FB_NEW_POOL(pool) IntlString(pool, string(q, l));
+			node->litDesc.dsc_scale = (SCHAR) scale;
 
 			switch (dtype)
 			{
@@ -7413,13 +7395,14 @@ DmlNode* LiteralNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 				case dtype_dec128:
 					node->litDesc.dsc_length = sizeof(Decimal128);
 					break;
+				case dtype_int128:
+					node->litDesc.dsc_length = sizeof(Int128);
+					break;
 				case dtype_long:
 					node->litDesc.dsc_length = sizeof(SLONG);
-					node->litDesc.dsc_scale = (SCHAR) scale;
 					break;
 				default:
 					node->litDesc.dsc_length = sizeof(SINT64);
-					node->litDesc.dsc_scale = (SCHAR) scale;
 			}
 			break;
 		}
@@ -7442,8 +7425,38 @@ DmlNode* LiteralNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 	return node;
 }
 
+// Generate BLR for a negated zero (take care about possible DECFLOAT).
+void LiteralNode::genNegZero(DsqlCompilerScratch* dsqlScratch, int prec)
+{
+	char buf[32];		// 18 bytes for max number of digits + some reserve
+	char* s = buf;
+	*s++ = '-';
+	*s++ = '0';
+
+	if (prec)
+	{
+		*s++ = '.';
+		while (prec--)
+			*s++ = '0';
+	}
+	*s = 0;
+
+	dsc desc;
+	desc.dsc_dtype = dtype_double;
+	desc.dsc_scale = 0;
+	desc.dsc_length = sizeof(double);
+	desc.dsc_address = (UCHAR*) buf;
+
+	GEN_descriptor(dsqlScratch, &desc, true);
+
+	const USHORT len = static_cast<USHORT>(s - buf);
+	dsqlScratch->appendUShort(len);
+	if (len)
+		dsqlScratch->appendBytes(desc.dsc_address, len);
+}
+
 // Generate BLR for a constant.
-void LiteralNode::genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc, bool negateValue)
+void LiteralNode::genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc, bool negateValue, USHORT numStringLength)
 {
 	SLONG value;
 	SINT64 i64value;
@@ -7455,18 +7468,34 @@ void LiteralNode::genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc,
 	switch (desc->dsc_dtype)
 	{
 		case dtype_short:
-			GEN_descriptor(dsqlScratch, desc, true);
 			value = *(SSHORT*) p;
 			if (negateValue)
+			{
+				if (!value)
+				{
+					genNegZero(dsqlScratch, 0);
+					return;
+				}
 				value = -value;
+			}
+
+			GEN_descriptor(dsqlScratch, desc, true);
 			dsqlScratch->appendUShort(value);
 			break;
 
 		case dtype_long:
-			GEN_descriptor(dsqlScratch, desc, true);
 			value = *(SLONG*) p;
 			if (negateValue)
+			{
+				if (!value)
+				{
+					genNegZero(dsqlScratch, 0);
+					return;
+				}
 				value = -value;
+			}
+
+			GEN_descriptor(dsqlScratch, desc, true);
 			dsqlScratch->appendUShort(value);
 			dsqlScratch->appendUShort(value >> 16);
 			break;
@@ -7490,25 +7519,23 @@ void LiteralNode::genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc,
 
 		case dtype_double:
 		case dtype_dec128:
+		case dtype_int128:
 		{
 			// this is used for approximate/large numeric literal
 			// which is transmitted to the engine as a string.
 
 			GEN_descriptor(dsqlScratch, desc, true);
 
-			// Length of string literal - keep it in sub_type which is unused
-			const USHORT l = desc->dsc_sub_type;
-
 			if (negateValue)
 			{
-				dsqlScratch->appendUShort(l + 1);
+				dsqlScratch->appendUShort(numStringLength + 1);
 				dsqlScratch->appendUChar('-');
 			}
 			else
-				dsqlScratch->appendUShort(l);
+				dsqlScratch->appendUShort(numStringLength);
 
-			if (l)
-				dsqlScratch->appendBytes(p, l);
+			if (numStringLength)
+				dsqlScratch->appendBytes(p, numStringLength);
 
 			break;
 		}
@@ -7517,7 +7544,14 @@ void LiteralNode::genConstant(DsqlCompilerScratch* dsqlScratch, const dsc* desc,
 			i64value = *(SINT64*) p;
 
 			if (negateValue)
+			{
+				if (!i64value)
+				{
+					genNegZero(dsqlScratch, -desc->dsc_scale);
+					return;
+				}
 				i64value = -i64value;
+			}
 			else if (i64value == MIN_SINT64)
 			{
 				// UH OH!
@@ -7710,7 +7744,7 @@ void LiteralNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 	if (litDesc.dsc_dtype == dtype_text)
 		litDesc.dsc_length = dsqlStr->getString().length();
 
-	genConstant(dsqlScratch, &litDesc, false);
+	genConstant(dsqlScratch, &litDesc, false, litNumStringLength);
 }
 
 void LiteralNode::make(DsqlCompilerScratch* /*dsqlScratch*/, dsc* desc)
@@ -7801,6 +7835,41 @@ bool LiteralNode::sameAs(CompilerScratch* csb, const ExprNode* other, bool ignor
 
 ValueExprNode* LiteralNode::pass2(thread_db* tdbb, CompilerScratch* csb)
 {
+	if (csb->csb_preferredDesc && ((DTYPE_IS_DECFLOAT(csb->csb_preferredDesc->dsc_dtype) ||
+		 csb->csb_preferredDesc->dsc_dtype == dtype_int128) && dsqlStr))
+	{
+		const string& s(dsqlStr->getString());
+		dsc desc;
+		desc.makeText(s.length(), CS_ASCII, (UCHAR*) s.c_str());
+
+		switch (csb->csb_preferredDesc->dsc_dtype)
+		{
+		case dtype_dec64:
+			*((Decimal64*) litDesc.dsc_address) = CVT_get_dec64(&desc,
+				tdbb->getAttachment()->att_dec_status, ERR_post);
+			litDesc.dsc_dtype = dtype_dec64;
+			litDesc.dsc_scale = 0;
+			break;
+
+		case dtype_dec128:
+			*((Decimal128*) litDesc.dsc_address) = CVT_get_dec128(&desc,
+				tdbb->getAttachment()->att_dec_status, ERR_post);
+			litDesc.dsc_dtype = dtype_dec128;
+			litDesc.dsc_scale = 0;
+			break;
+
+		case dtype_int128:
+			*((Int128*) litDesc.dsc_address) = CVT_get_int128(&desc,
+				csb->csb_preferredDesc->dsc_scale, tdbb->getAttachment()->att_dec_status, ERR_post);
+			litDesc.dsc_dtype = dtype_int128;
+			litDesc.dsc_scale = csb->csb_preferredDesc->dsc_scale;
+			break;
+		}
+	}
+
+	delete dsqlStr;		// Not needed anymore
+	dsqlStr = 0;
+
 	ValueExprNode::pass2(tdbb, csb);
 
 	dsc desc;
@@ -7817,7 +7886,7 @@ dsc* LiteralNode::execute(thread_db* /*tdbb*/, jrd_req* /*request*/) const
 
 void LiteralNode::fixMinSInt64(MemoryPool& pool)
 {
-	// MIN_SINT64 should be stored as BIGINT, not DECFLOAT
+	// MIN_SINT64 should be stored as BIGINT, not 128-bit integer
 
 	const UCHAR* s = litDesc.dsc_address;
 	const char* minSInt64 = "9223372036854775808";
@@ -8071,7 +8140,7 @@ ValueExprNode* DsqlAliasNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 {
 	DsqlAliasNode* node = FB_NEW_POOL(dsqlScratch->getPool()) DsqlAliasNode(dsqlScratch->getPool(), name,
 		doDsqlPass(dsqlScratch, value));
-	MAKE_desc(dsqlScratch, &node->value->nodDesc, node->value);
+	DsqlDescMaker::fromNode(dsqlScratch, &node->value->nodDesc, node->value);
 	return node;
 }
 
@@ -8088,7 +8157,7 @@ void DsqlAliasNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void DsqlAliasNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, value);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, value);
 }
 
 
@@ -8249,7 +8318,7 @@ void DsqlMapNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void DsqlMapNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, map->map_node);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, map->map_node);
 
 	// ASF: We should mark nod_agg_count as nullable when it's in an outer join - CORE-2660.
 	if (context->ctx_flags & CTX_outer_join)
@@ -8479,7 +8548,7 @@ void DerivedFieldNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void DerivedFieldNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, value);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, value);
 }
 
 
@@ -8493,7 +8562,7 @@ NegateNode::NegateNode(MemoryPool& pool, ValueExprNode* aArg)
 	  arg(aArg)
 {
 	LiteralNode* literal = nodeAs<LiteralNode>(arg);
-	if (literal && literal->litDesc.dsc_dtype == dtype_dec128)
+	if (literal && literal->litDesc.dsc_dtype == dtype_int128)
 		literal->fixMinSInt64(pool);
 }
 
@@ -8559,7 +8628,7 @@ void NegateNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 	LiteralNode* literal = nodeAs<LiteralNode>(arg);
 
 	if (literal && DTYPE_IS_NUMERIC(literal->litDesc.dsc_dtype))
-		LiteralNode::genConstant(dsqlScratch, &literal->litDesc, true);
+		LiteralNode::genConstant(dsqlScratch, &literal->litDesc, true, literal->litNumStringLength);
 	else
 	{
 		dsqlScratch->appendUChar(blr_negate);
@@ -8569,7 +8638,7 @@ void NegateNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void NegateNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg);
 
 	if (nodeIs<NullNode>(arg))
 	{
@@ -8673,8 +8742,8 @@ dsc* NegateNode::execute(thread_db* tdbb, jrd_req* request) const
 			impure->vlu_misc.vlu_dec128 = impure->vlu_misc.vlu_dec128.neg();
 			break;
 
-		case dtype_dec_fixed:
-			impure->vlu_misc.vlu_dec_fixed = impure->vlu_misc.vlu_dec_fixed.neg();
+		case dtype_int128:
+			impure->vlu_misc.vlu_int128 = impure->vlu_misc.vlu_int128.neg();
 			break;
 
 		case dtype_int64:
@@ -8970,7 +9039,7 @@ WindowClause* WindowClause::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 			fb_assert(key);
 
 			dsc desc;
-			MAKE_desc(dsqlScratch, &desc, key->value);
+			DsqlDescMaker::fromNode(dsqlScratch, &desc, key->value);
 
 			if (!desc.isDateTime() && !desc.isNumeric())
 			{
@@ -8989,7 +9058,7 @@ WindowClause* WindowClause::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 			if (frame && frame->value)
 			{
 				dsc desc;
-				MAKE_desc(dsqlScratch, &desc, frame->value);
+				DsqlDescMaker::fromNode(dsqlScratch, &desc, frame->value);
 
 				if (!desc.isNumeric())
 				{
@@ -9160,8 +9229,7 @@ void OverNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void OverNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, aggExpr);
-	desc->setNullable(true);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, aggExpr, true);
 }
 
 void OverNode::getDesc(thread_db* /*tdbb*/, CompilerScratch* /*csb*/, dsc* /*desc*/)
@@ -10393,7 +10461,7 @@ void StrCaseNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void StrCaseNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, arg);
+	DsqlDescMaker::fromNode(dsqlScratch, desc, arg);
 
 	if (desc->dsc_dtype > dtype_any_text && desc->dsc_dtype != dtype_blob)
 	{
@@ -10613,7 +10681,7 @@ void StrLenNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 void StrLenNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc desc1;
-	MAKE_desc(dsqlScratch, &desc1, arg);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc1, arg);
 
 	if (desc1.isBlob())
 		desc->makeInt64(0);
@@ -10885,12 +10953,11 @@ void SubQueryNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void SubQueryNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, value1);
-
 	// Set the descriptor flag as nullable. The select expression may or may not return this row
 	// based on the WHERE clause. Setting this flag warns the client to expect null values.
 	// (bug 10379)
-	desc->dsc_flags |= DSC_nullable;
+
+	DsqlDescMaker::fromNode(dsqlScratch, desc, value1, true);
 }
 
 bool SubQueryNode::dsqlAggregateFinder(AggregateFinder& visitor)
@@ -11022,7 +11089,7 @@ void SubQueryNode::getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc)
 
 			case dtype_dec64:
 			case dtype_dec128:
-			case dtype_dec_fixed:
+			case dtype_int128:
 				desc->dsc_dtype = dtype_dec128;
 				desc->dsc_length = sizeof(Decimal128);
 				desc->dsc_scale = 0;
@@ -11379,12 +11446,12 @@ void SubstringNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc desc1, desc2, desc3;
 
-	MAKE_desc(dsqlScratch, &desc1, expr);
-	MAKE_desc(dsqlScratch, &desc2, start);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc1, expr);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc2, start);
 
 	if (length)
 	{
-		MAKE_desc(dsqlScratch, &desc3, length);
+		DsqlDescMaker::fromNode(dsqlScratch, &desc3, length);
 
 		if (!nodeIs<LiteralNode>(length))
 			desc3.dsc_address = NULL;
@@ -11690,7 +11757,11 @@ void SubstringSimilarNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 
 void SubstringSimilarNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
-	MAKE_desc(dsqlScratch, desc, expr);
+	dsc exprDesc;
+	DsqlDescMaker::fromNode(dsqlScratch, &exprDesc, expr);
+
+	DSqlDataTypeUtil dataTypeUtil(dsqlScratch);
+	dataTypeUtil.makeSubstr(desc, &exprDesc, nullptr, nullptr);
 	desc->setNullable(true);
 }
 
@@ -11805,7 +11876,7 @@ dsc* SubstringSimilarNode::execute(thread_db* tdbb, jrd_req* request) const
 			delete impure->vlu_misc.vlu_invariant;
 
 			impure->vlu_misc.vlu_invariant = evaluator = collation->createSubstringSimilarMatcher(
-				*tdbb->getDefaultPool(), patternStr, patternLen, escapeStr, escapeLen);
+				tdbb, *tdbb->getDefaultPool(), patternStr, patternLen, escapeStr, escapeLen);
 
 			impure->vlu_flags |= VLU_computed;
 		}
@@ -11817,7 +11888,7 @@ dsc* SubstringSimilarNode::execute(thread_db* tdbb, jrd_req* request) const
 	}
 	else
 	{
-		autoEvaluator = evaluator = collation->createSubstringSimilarMatcher(*tdbb->getDefaultPool(),
+		autoEvaluator = evaluator = collation->createSubstringSimilarMatcher(tdbb, *tdbb->getDefaultPool(),
 			patternStr, patternLen, escapeStr, escapeLen);
 	}
 
@@ -11825,18 +11896,17 @@ dsc* SubstringSimilarNode::execute(thread_db* tdbb, jrd_req* request) const
 
 	if (evaluator->result())
 	{
-		// Get the byte bounds of the matched substring.
-		unsigned start = 0;
-		unsigned length = 0;
+		// Get the character bounds of the matched substring.
+		unsigned start, length;
 		evaluator->getResultInfo(&start, &length);
 
 		dsc desc;
 		desc.makeText((USHORT) exprLen, textType);
 		EVL_make_value(tdbb, &desc, impure);
 
-		// And return it.
-		memcpy(impure->vlu_desc.dsc_address, exprStr + start, length);
-		impure->vlu_desc.dsc_length = length;
+		impure->vlu_desc.dsc_length = charSet->substring(exprLen, exprStr,
+			impure->vlu_desc.dsc_length, impure->vlu_desc.dsc_address,
+			start, length);
 
 		return &impure->vlu_desc;
 	}
@@ -11938,7 +12008,7 @@ void SysFuncCallNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 
 	for (auto& arg : args->items)
 	{
-		MAKE_desc(dsqlScratch, &arg->nodDesc, arg);
+		DsqlDescMaker::fromNode(dsqlScratch, &arg->nodDesc, arg);
 		argsArray.add(&arg->nodDesc);
 	}
 
@@ -12044,7 +12114,7 @@ ValueExprNode* SysFuncCallNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 		for (unsigned int i = 0; i < inList->items.getCount(); ++i)
 		{
 			ValueExprNode* p = inList->items[i];
-			MAKE_desc(dsqlScratch, &p->nodDesc, p);
+			DsqlDescMaker::fromNode(dsqlScratch, &p->nodDesc, p);
 			argsArray.add(&p->nodDesc);
 		}
 
@@ -12147,10 +12217,10 @@ void TrimNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	dsc desc1, desc2;
 
-	MAKE_desc(dsqlScratch, &desc1, value);
+	DsqlDescMaker::fromNode(dsqlScratch, &desc1, value);
 
 	if (trimChars)
-		MAKE_desc(dsqlScratch, &desc2, trimChars);
+		DsqlDescMaker::fromNode(dsqlScratch, &desc2, trimChars);
 	else
 		desc2.dsc_flags = 0;
 
@@ -13145,10 +13215,10 @@ void ValueIfNode::make(DsqlCompilerScratch* dsqlScratch, dsc* desc)
 {
 	Array<const dsc*> args;
 
-	MAKE_desc(dsqlScratch, &trueValue->nodDesc, trueValue);
+	DsqlDescMaker::fromNode(dsqlScratch, &trueValue->nodDesc, trueValue);
 	args.add(&trueValue->nodDesc);
 
-	MAKE_desc(dsqlScratch, &falseValue->nodDesc, falseValue);
+	DsqlDescMaker::fromNode(dsqlScratch, &falseValue->nodDesc, falseValue);
 	args.add(&falseValue->nodDesc);
 
 	DSqlDataTypeUtil(dsqlScratch).makeFromList(desc, "CASE", args.getCount(), args.begin());

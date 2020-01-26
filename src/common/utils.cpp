@@ -38,6 +38,7 @@
 #endif
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <ctype.h>
 
 #include "../common/gdsassert.h"
@@ -45,13 +46,13 @@
 #include "../common/classes/locks.h"
 #include "../common/classes/init.h"
 #include "../jrd/constants.h"
-#include "../jrd/inf_pub.h"
+#include "firebird/impl/inf_pub.h"
 #include "../jrd/align.h"
 #include "../common/os/path_utils.h"
 #include "../common/os/fbsyslog.h"
 #include "../common/StatusArg.h"
 #include "../common/os/os_utils.h"
-#include "../dsql/sqlda_pub.h"
+#include "firebird/impl/sqlda_pub.h"
 #include "../common/classes/ClumpletReader.h"
 #include "../common/StatusArg.h"
 
@@ -302,6 +303,35 @@ bool readenv(const char* env_name, Firebird::PathName& env_value)
 	return rc;
 }
 
+
+bool setenv(const char* name, const char* value, bool overwrite)
+{
+#ifdef WIN_NT
+	int errcode = 0;
+
+	if (!overwrite)
+	{
+		size_t envsize = 0;
+		errcode = getenv_s(&envsize, NULL, 0, name);
+		if (errcode || envsize)
+			return false;
+	}
+
+	// In Windows, _putenv_s sets only the environment data in the CRT.
+	// Each DLL (for example ICU) may use a different CRT which different data
+	// or use Win32's GetEnvironmentVariable, so we also use SetEnvironmentVariable.
+	// This is a mess and is not guarenteed to work correctly in all situations.
+	if (SetEnvironmentVariable(name, value))
+	{
+		_putenv_s(name, value);
+		return true;
+	}
+	else
+		return false;
+#else
+	return ::setenv(name, value, (int) overwrite) == 0;
+#endif
+}
 
 // ***************
 // s n p r i n t f
@@ -1475,11 +1505,7 @@ void logAndDie(const char* text)
 {
 	gds__log(text);
 	Firebird::Syslog::Record(Firebird::Syslog::Error, text);
-#ifdef WIN_NT
-	exit(3);
-#else
 	abort();
-#endif
 }
 
 UCHAR sqlTypeToDscType(SSHORT sqlType)
@@ -1522,8 +1548,8 @@ UCHAR sqlTypeToDscType(SSHORT sqlType)
 		return dtype_dec64;
 	case SQL_DEC34:
 		return dtype_dec128;
-	case SQL_DEC_FIXED:
-		return dtype_dec_fixed;
+	case SQL_INT128:
+		return dtype_int128;
 	case SQL_TIME_TZ:
 		return dtype_sql_time_tz;
 	case SQL_TIMESTAMP_TZ:
@@ -1570,21 +1596,22 @@ unsigned sqlTypeToDsc(unsigned runOffset, unsigned sqlType, unsigned sqlLength,
 	return runOffset + sizeof(SSHORT);
 }
 
+const ISC_STATUS* nextArg(const ISC_STATUS* v) throw()
+{
+	do
+	{
+		v += (v[0] == isc_arg_cstring ? 3 : 2);
+	} while (v[0] != isc_arg_warning && v[0] != isc_arg_gds && v[0] != isc_arg_end);
+
+	return v;
+}
+
 bool containsErrorCode(const ISC_STATUS* v, ISC_STATUS code)
 {
-#ifdef DEV_BUILD
-const ISC_STATUS* const origen = v;
-#endif
-	while (v[0] == isc_arg_gds)
+	for (; v[0] == isc_arg_gds; v = nextArg(v))
 	{
 		if (v[1] == code)
 			return true;
-
-		do
-		{
-			v += (v[0] == isc_arg_cstring ? 3 : 2);
-		} while (v[0] != isc_arg_warning && v[0] != isc_arg_gds && v[0] != isc_arg_end);
-		fb_assert(v - origen < ISC_STATUS_LENGTH);
 	}
 
 	return false;

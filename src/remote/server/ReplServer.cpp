@@ -24,7 +24,7 @@
 #include "firebird/Message.h"
 #include "../common/common.h"
 #include "../jrd/constants.h"
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../jrd/license.h"
 #include "../jrd/ods.h"
 #include "../common/os/guid.h"
@@ -36,6 +36,7 @@
 #include "../common/ThreadStart.h"
 #include "../common/utils_proto.h"
 #include "../common/utils_proto.h"
+#include "../common/classes/ParsedList.h"
 
 #include "../jrd/replication/Applier.h"
 #include "../jrd/replication/ChangeLog.h"
@@ -356,7 +357,7 @@ namespace
 			ClumpletWriter dpb(ClumpletReader::Tagged, MAX_DPB_SIZE, isc_dpb_version1);
 
 			dpb.insertString(isc_dpb_user_name, DBA_USER_NAME);
-			dpb.insertString(isc_dpb_config, EMBEDDED_PROVIDERS, fb_strlen(EMBEDDED_PROVIDERS));
+			dpb.insertString(isc_dpb_config, ParsedList::getNonLoopbackProviders(m_config->dbName));
 
 #ifndef NO_DATABASE
 			DispatcherPtr provider;

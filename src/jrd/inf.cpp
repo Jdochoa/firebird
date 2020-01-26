@@ -822,6 +822,19 @@ void INF_database_info(thread_db* tdbb,
 			length = INF_convert(tdbb->getAttachment()->att_remote_flags, buffer);
 			break;
 
+		case fb_info_wire_crypt:
+			{
+				const PathName& nm = tdbb->getAttachment()->att_remote_crypt;
+				if (!(info = INF_put_item(item, static_cast<USHORT>(nm.length()), nm.c_str(), info, end)))
+				{
+					if (transaction)
+						TRA_commit(tdbb, transaction, false);
+
+					return;
+				}
+			}
+			continue;
+
 		case fb_info_statement_timeout_db:
 			length = INF_convert(dbb->dbb_config->getStatementTimeout(), buffer);
 			break;

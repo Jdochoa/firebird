@@ -525,7 +525,8 @@ Connection::Connection(Provider& prov) :
 	m_deleting(false),
 	m_sqlDialect(0),
 	m_wrapErrors(true),
-	m_broken(false)
+	m_broken(false),
+	m_features(0)
 {
 }
 
@@ -2426,14 +2427,15 @@ void Statement::putExtBlob(thread_db* tdbb, dsc& src, dsc& dst)
 		}
 
 		srcBlob->BLB_close(tdbb);
+		srcBlob = NULL;
 		extBlob->close(tdbb);
 	}
 	catch (const Exception&)
 	{
-		extBlob->cancel(tdbb);
 		if (srcBlob) {
 			srcBlob->BLB_close(tdbb);
 		}
+		extBlob->cancel(tdbb);
 		throw;
 	}
 }

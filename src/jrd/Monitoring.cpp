@@ -124,14 +124,40 @@ bool MonitoringTableScan::retrieveRecord(thread_db* tdbb, jrd_rel* relation,
 // MonitoringData class
 
 MonitoringData::MonitoringData(const Database* dbb)
+	: PermanentStorage(*dbb->dbb_permanent),
+	  m_dbId(getPool(), dbb->getUniqueFileId())
 {
-	string name;
-	name.printf(MONITOR_FILE, dbb->getUniqueFileId().c_str());
+	initSharedFile();
+}
 
-	Arg::StatusVector statusVector;
+
+MonitoringData::~MonitoringData()
+{
+	m_sharedMemory->mutexLock();
+
 	try
 	{
-		shared_memory.reset(FB_NEW_POOL(*dbb->dbb_permanent)
+		if (m_sharedMemory->getHeader() &&
+			m_sharedMemory->getHeader()->used == alignOffset(sizeof(Header)))
+		{
+			m_sharedMemory->removeMapFile();
+		}
+	}
+	catch (const Exception&)
+	{} // no-op
+
+	m_sharedMemory->mutexUnlock();
+}
+
+
+void MonitoringData::initSharedFile()
+{
+	PathName name;
+	name.printf(MONITOR_FILE, m_dbId.c_str());
+
+	try
+	{
+		m_sharedMemory.reset(FB_NEW_POOL(getPool())
 			SharedMemory<MonitoringHeader>(name.c_str(), DEFAULT_SIZE, this));
 	}
 	catch (const Exception& ex)
@@ -140,33 +166,45 @@ MonitoringData::MonitoringData(const Database* dbb)
 		throw;
 	}
 
-	fb_assert(shared_memory->getHeader()->mhb_header_version == MemoryHeader::HEADER_VERSION);
-	fb_assert(shared_memory->getHeader()->mhb_version == MONITOR_VERSION);
-}
-
-
-MonitoringData::~MonitoringData()
-{
-	Guard guard(this);
-
-	if (shared_memory->getHeader()->used == alignOffset(sizeof(Header)))
-		shared_memory->removeMapFile();
+	fb_assert(m_sharedMemory->getHeader()->mhb_type == SharedMemoryBase::SRAM_DATABASE_SNAPSHOT);
+	fb_assert(m_sharedMemory->getHeader()->mhb_header_version == MemoryHeader::HEADER_VERSION);
+	fb_assert(m_sharedMemory->getHeader()->mhb_version == MONITOR_VERSION);
 }
 
 
 void MonitoringData::acquire()
 {
-	shared_memory->mutexLock();
+	m_localMutex.enter(FB_FUNCTION);
+	m_sharedMemory->mutexLock();
 
-	if (shared_memory->getHeader()->allocated > shared_memory->sh_mem_length_mapped)
+	while (m_sharedMemory->getHeader()->used == alignOffset(sizeof(Header)))
+	{
+		if (m_sharedMemory->justCreated())
+			break;
+
+		// Someone is going to delete shared file? Reattach.
+		m_sharedMemory->mutexUnlock();
+		m_sharedMemory.reset();
+
+		Thread::yield();
+
+		initSharedFile();
+		m_sharedMemory->mutexLock();
+	}
+
+	fb_assert(!m_sharedMemory->justCreated());
+
+	if (m_sharedMemory->getHeader()->allocated > m_sharedMemory->sh_mem_length_mapped)
 	{
 #ifdef HAVE_OBJECT_MAP
 		FbLocalStatus statusVector;
-		if (!shared_memory->remapFile(&statusVector, shared_memory->getHeader()->allocated, false))
+		if (!m_sharedMemory->remapFile(&statusVector, m_sharedMemory->getHeader()->allocated, false))
 		{
+			release();
 			status_exception::raise(&statusVector);
 		}
 #else
+		release();
 		status_exception::raise(Arg::Gds(isc_montabexh));
 #endif
 	}
@@ -175,7 +213,8 @@ void MonitoringData::acquire()
 
 void MonitoringData::release()
 {
-	shared_memory->mutexUnlock();
+	m_sharedMemory->mutexUnlock();
+	m_localMutex.leave();
 }
 
 
@@ -185,9 +224,9 @@ void MonitoringData::read(const char* user_name, TempSpace& temp)
 
 	// Copy data of all permitted sessions
 
-	for (ULONG offset = alignOffset(sizeof(Header)); offset < shared_memory->getHeader()->used;)
+	for (ULONG offset = alignOffset(sizeof(Header)); offset < m_sharedMemory->getHeader()->used;)
 	{
-		UCHAR* const ptr = (UCHAR*) shared_memory->getHeader() + offset;
+		UCHAR* const ptr = (UCHAR*) m_sharedMemory->getHeader() + offset;
 		const Element* const element = (Element*) ptr;
 		const ULONG length = alignOffset(sizeof(Element) + element->length);
 
@@ -204,19 +243,19 @@ void MonitoringData::read(const char* user_name, TempSpace& temp)
 
 ULONG MonitoringData::setup(AttNumber att_id, const char* user_name)
 {
-	const ULONG offset = alignOffset(shared_memory->getHeader()->used);
-	const ULONG delta = offset + sizeof(Element) - shared_memory->getHeader()->used;
+	const ULONG offset = alignOffset(m_sharedMemory->getHeader()->used);
+	const ULONG delta = offset + sizeof(Element) - m_sharedMemory->getHeader()->used;
 
 	ensureSpace(delta);
 
 	// Prepare for writing new data at the tail
 
-	UCHAR* const ptr = (UCHAR*) shared_memory->getHeader() + offset;
+	UCHAR* const ptr = (UCHAR*) m_sharedMemory->getHeader() + offset;
 	Element* const element = (Element*) ptr;
 	element->attId = att_id;
-	strncpy(element->userName, user_name, USERNAME_LENGTH);
+	snprintf(element->userName, sizeof(element->userName), "%s", user_name);
 	element->length = 0;
-	shared_memory->getHeader()->used += delta;
+	m_sharedMemory->getHeader()->used += delta;
 	return offset;
 }
 
@@ -227,11 +266,11 @@ void MonitoringData::write(ULONG offset, ULONG length, const void* buffer)
 
 	// Write data item at the tail
 
-	UCHAR* const ptr = (UCHAR*) shared_memory->getHeader() + offset;
+	UCHAR* const ptr = (UCHAR*) m_sharedMemory->getHeader() + offset;
 	Element* const element = (Element*) ptr;
 	memcpy(ptr + sizeof(Element) + element->length, buffer, length);
 	element->length += length;
-	shared_memory->getHeader()->used += length;
+	m_sharedMemory->getHeader()->used += length;
 }
 
 
@@ -239,22 +278,22 @@ void MonitoringData::cleanup(AttNumber att_id)
 {
 	// Remove information about the given session
 
-	for (ULONG offset = alignOffset(sizeof(Header)); offset < shared_memory->getHeader()->used;)
+	for (ULONG offset = alignOffset(sizeof(Header)); offset < m_sharedMemory->getHeader()->used;)
 	{
-		UCHAR* const ptr = (UCHAR*) shared_memory->getHeader() + offset;
+		UCHAR* const ptr = (UCHAR*) m_sharedMemory->getHeader() + offset;
 		const Element* const element = (Element*) ptr;
 		const ULONG length = alignOffset(sizeof(Element) + element->length);
 
 		if (element->attId == att_id)
 		{
-			if (offset + length < shared_memory->getHeader()->used)
+			if (offset + length < m_sharedMemory->getHeader()->used)
 			{
-				memmove(ptr, ptr + length, shared_memory->getHeader()->used - offset - length);
-				shared_memory->getHeader()->used -= length;
+				memmove(ptr, ptr + length, m_sharedMemory->getHeader()->used - offset - length);
+				m_sharedMemory->getHeader()->used -= length;
 			}
 			else
 			{
-				shared_memory->getHeader()->used = offset;
+				m_sharedMemory->getHeader()->used = offset;
 			}
 
 			break;
@@ -269,9 +308,9 @@ void MonitoringData::enumerate(SessionList& sessions, const char* user_name)
 {
 	// Return IDs for all known (and permitted) sessions
 
-	for (ULONG offset = alignOffset(sizeof(Header)); offset < shared_memory->getHeader()->used;)
+	for (ULONG offset = alignOffset(sizeof(Header)); offset < m_sharedMemory->getHeader()->used;)
 	{
-		UCHAR* const ptr = (UCHAR*) shared_memory->getHeader() + offset;
+		UCHAR* const ptr = (UCHAR*) m_sharedMemory->getHeader() + offset;
 		const Element* const element = (Element*) ptr;
 		const ULONG length = alignOffset(sizeof(Element) + element->length);
 
@@ -285,19 +324,19 @@ void MonitoringData::enumerate(SessionList& sessions, const char* user_name)
 
 void MonitoringData::ensureSpace(ULONG length)
 {
-	ULONG newSize = shared_memory->getHeader()->used + length;
+	ULONG newSize = m_sharedMemory->getHeader()->used + length;
 
-	if (newSize > shared_memory->getHeader()->allocated)
+	if (newSize > m_sharedMemory->getHeader()->allocated)
 	{
 		newSize = FB_ALIGN(newSize, DEFAULT_SIZE);
 
 #ifdef HAVE_OBJECT_MAP
 		FbLocalStatus statusVector;
-		if (!shared_memory->remapFile(&statusVector, newSize, true))
+		if (!m_sharedMemory->remapFile(&statusVector, newSize, true))
 		{
 			status_exception::raise(&statusVector);
 		}
-		shared_memory->getHeader()->allocated = shared_memory->sh_mem_length_mapped;
+		m_sharedMemory->getHeader()->allocated = m_sharedMemory->sh_mem_length_mapped;
 #else
 		status_exception::raise(Arg::Gds(isc_montabexh));
 #endif
@@ -317,7 +356,7 @@ bool MonitoringData::initialize(SharedMemoryBase* sm, bool initialize)
 {
 	if (initialize)
 	{
-		MonitoringHeader* header = reinterpret_cast<MonitoringHeader*>(sm->sh_mem_header);
+		MonitoringHeader* const header = reinterpret_cast<MonitoringHeader*>(sm->sh_mem_header);
 
 		// Initialize the shared data header
 		header->init(SharedMemoryBase::SRAM_DATABASE_SNAPSHOT, MONITOR_VERSION);
@@ -829,7 +868,10 @@ void Monitoring::putDatabase(thread_db* tdbb, SnapshotData::DumpRecord& record)
 
 	// crypt thread status
 	if (database->dbb_crypto_manager)
+	{
 		record.storeInteger(f_mon_db_crypt_page, database->dbb_crypto_manager->getCurrentPage());
+		record.storeInteger(f_mon_db_crypt_state, database->dbb_crypto_manager->getCurrentState());
+	}
 
 	// database owner
 	record.storeString(f_mon_db_owner, database->dbb_owner);
@@ -879,14 +921,17 @@ void Monitoring::putAttachment(SnapshotData::DumpRecord& record, const Jrd::Atta
 	record.reset(rel_mon_attachments);
 
 	int temp = mon_state_idle;
-
-	for (const jrd_tra* transaction_itr = attachment->att_transactions;
-		 transaction_itr; transaction_itr = transaction_itr->tra_next)
+	for (const jrd_tra* transaction = attachment->att_transactions;
+		 transaction; transaction = transaction->tra_next)
 	{
-		if (transaction_itr->tra_requests)
+		for (const jrd_req* request = transaction->tra_requests;
+			request; request = request->req_tra_next)
 		{
-			temp = mon_state_active;
-			break;
+			if (request->req_transaction && (request->req_flags & req_active))
+			{
+				temp = mon_state_active;
+				break;
+			}
 		}
 	}
 
@@ -933,6 +978,8 @@ void Monitoring::putAttachment(SnapshotData::DumpRecord& record, const Jrd::Atta
 	record.storeString(f_mon_att_client_version, attachment->att_client_version);
 	// remote protocol version
 	record.storeString(f_mon_att_remote_version, attachment->att_remote_protocol);
+	// wire encryption plugin
+	record.storeString(f_mon_att_remote_crypt, attachment->att_remote_crypt);
 	// remote host name
 	record.storeString(f_mon_att_remote_host, attachment->att_remote_host);
 	// OS user name
@@ -980,14 +1027,22 @@ void Monitoring::putTransaction(SnapshotData::DumpRecord& record, const jrd_tra*
 
 	record.reset(rel_mon_transactions);
 
-	int temp;
+	int temp = mon_state_idle;
+	for (const jrd_req* request = transaction->tra_requests;
+		request; request = request->req_tra_next)
+	{
+		if (request->req_transaction && (request->req_flags & req_active))
+		{
+			temp = mon_state_active;
+			break;
+		}
+	}
 
 	// transaction id
 	record.storeInteger(f_mon_tra_id, transaction->tra_number);
 	// attachment id
 	record.storeInteger(f_mon_tra_att_id, transaction->tra_attachment->att_attachment_id);
 	// state
-	temp = transaction->tra_requests ? mon_state_active : mon_state_idle;
 	record.storeInteger(f_mon_tra_state, temp);
 	// timestamp
 	record.storeTimestampTz(f_mon_tra_timestamp, transaction->tra_timestamp);

@@ -36,7 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../yvalve/gds_proto.h"
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "../common/classes/ClumpletWriter.h"
 #include "../common/classes/timestamp.h"
 #include "../common/utils_proto.h"
@@ -404,6 +404,7 @@ const SvcSwitches backupOptions[] =
 	{"bkp_no_triggers", putOption, 0, isc_spb_bkp_no_triggers, 0},
 	{"verbint", putIntArgument, 0, isc_spb_verbint, 0},
 	{"bkp_skip_data", putStringArgument, 0, isc_spb_bkp_skip_data, 0},
+	{"bkp_include_data", putStringArgument, 0, isc_spb_bkp_include_data, 0},
 	{"bkp_stat", putStringArgument, 0, isc_spb_bkp_stat, 0 },
 	{"bkp_keyholder", putStringArgument, 0, isc_spb_bkp_keyholder, 0 },
 	{"bkp_keyname", putStringArgument, 0, isc_spb_bkp_keyname, 0 },
@@ -433,6 +434,7 @@ const SvcSwitches restoreOptions[] =
 	{"res_metadata_only", putOption, 0, isc_spb_res_metadata_only, 0},
 	{"verbint", putIntArgument, 0, isc_spb_verbint, 0},
 	{"res_skip_data", putStringArgument, 0, isc_spb_res_skip_data, 0},
+	{"res_include_data", putStringArgument, 0, isc_spb_res_include_data, 0},
 	{"res_stat", putStringArgument, 0, isc_spb_res_stat, 0 },
 	{"res_keyholder", putStringArgument, 0, isc_spb_res_keyholder, 0 },
 	{"res_keyname", putStringArgument, 0, isc_spb_res_keyname, 0 },
@@ -601,10 +603,16 @@ const SvcSwitches actionSwitch[] =
 
 // print information, returned by isc_svc_query() call
 
+USHORT getShort(const char*& p)
+{
+	const USHORT num = (USHORT) isc_vax_integer(p, sizeof(USHORT));
+	p += sizeof(USHORT);
+	return num;
+}
+
 bool getLine(string& dest, const char*& p)
 {
-	const USHORT length = (USHORT) isc_vax_integer(p, sizeof(USHORT));
-	p += sizeof(USHORT);
+	const USHORT length = getShort(p);
 	dest.assign(p, length);
 	p += length;
 	return length > 0;
@@ -778,6 +786,8 @@ bool printInfo(const char* p, size_t pSize, UserPrint& up, ULONG& stdinRq)
 	bool ignoreTruncation = false;
 	stdinRq = 0;
 	const char* const end = p + pSize;
+	USHORT l;
+	const char* limboEnd;
 
 	while (p < end && *p != isc_info_end)
 	{
@@ -829,7 +839,12 @@ bool printInfo(const char* p, size_t pSize, UserPrint& up, ULONG& stdinRq)
 			break;
 
 		case isc_info_svc_limbo_trans:
-			while (*p != isc_info_flag_end)
+			l = getShort(p);
+			limboEnd = &p[l];
+			if (limboEnd > end)
+				limboEnd = end;
+
+			while (*p != isc_info_flag_end && p < limboEnd)
 			{
 				switch (*p++)
 				{
@@ -852,7 +867,7 @@ bool printInfo(const char* p, size_t pSize, UserPrint& up, ULONG& stdinRq)
 			            printMessage(41);
 						break;
 					default:
-						status_exception::raise(Arg::Gds(isc_fbsvcmgr_info_err) <<
+						status_exception::raise(Arg::Gds(isc_fbsvcmgr_limbo_state) <<
 												Arg::Num(static_cast<unsigned char>(p[-1])));
 					}
 					break;
@@ -875,7 +890,7 @@ bool printInfo(const char* p, size_t pSize, UserPrint& up, ULONG& stdinRq)
 			            printMessage(46);
 						break;
 					default:
-						status_exception::raise(Arg::Gds(isc_fbsvcmgr_info_err) <<
+						status_exception::raise(Arg::Gds(isc_fbsvcmgr_info_limbo) <<
 												Arg::Num(static_cast<unsigned char>(p[-1])));
 					}
 					break;
@@ -898,11 +913,12 @@ bool printInfo(const char* p, size_t pSize, UserPrint& up, ULONG& stdinRq)
 					printInt64(p, 37);
 					break;
 				default:
-					status_exception::raise(Arg::Gds(isc_fbsvcmgr_info_err) <<
+					status_exception::raise(Arg::Gds(isc_fbsvcmgr_info_limbo) <<
 											Arg::Num(static_cast<unsigned char>(p[-1])));
 				}
 			}
-			p++;
+			if (*p == isc_info_flag_end)
+				p++;
 			break;
 
 		case isc_info_svc_get_users:

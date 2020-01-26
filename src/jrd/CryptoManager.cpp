@@ -43,7 +43,7 @@
 #include "../jrd/cch_proto.h"
 #include "../jrd/lck_proto.h"
 #include "../jrd/pag_proto.h"
-#include "../jrd/inf_pub.h"
+#include "firebird/impl/inf_pub.h"
 #include "../jrd/Monitoring.h"
 #include "../jrd/os/pio_proto.h"
 #include "../common/isc_proto.h"
@@ -922,7 +922,7 @@ namespace Jrd {
 			UserId user;
 			user.setUserName("Database Crypter");
 
-			Jrd::Attachment* const attachment = Jrd::Attachment::create(&dbb, nullptr);
+			Jrd::Attachment* const attachment = Jrd::Attachment::create(&dbb);
 			RefPtr<SysStableAttachment> sAtt(FB_NEW SysStableAttachment(attachment));
 			attachment->setStable(sAtt);
 			attachment->att_filename = dbb.dbb_filename;

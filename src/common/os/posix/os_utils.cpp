@@ -82,6 +82,8 @@
 #include <utime.h>
 #endif
 
+#include <stdio.h>
+
 using namespace Firebird;
 
 namespace os_utils
@@ -162,32 +164,97 @@ namespace
 // create directory for lock files and set appropriate access rights
 void createLockDirectory(const char* pathname)
 {
-	do
+	struct STAT st;
+	for(;;)
 	{
 		if (access(pathname, R_OK | W_OK | X_OK) == 0)
 		{
-			struct STAT st;
 			if (os_utils::stat(pathname, &st) != 0)
 				system_call_failed::raise("stat");
-
 			if (S_ISDIR(st.st_mode))
 				return;
-
 			// not exactly original meaning, but very close to it
 			system_call_failed::raise("access", ENOTDIR);
 		}
-	} while (SYSCALL_INTERRUPTED(errno));
 
-	while (mkdir(pathname, 0700) != 0)		// anyway need chmod to avoid umask effects
-	{
 		if (SYSCALL_INTERRUPTED(errno))
-		{
 			continue;
-		}
-		(Arg::Gds(isc_lock_dir_access) << pathname).raise();
+		if (errno == ENOENT)
+			break;
+		system_call_failed::raise("access", ENOTDIR);
 	}
 
-	changeFileRights(pathname, 0770);
+	Firebird::PathName newname(pathname);
+	newname.rtrim("/");
+	newname += ".tmp.XXXXXX";
+	char* pathname2 = newname.begin();
+
+	while (!mkdtemp(pathname2))
+	{
+		if (SYSCALL_INTERRUPTED(errno))
+			continue;
+		(Arg::Gds(isc_lock_dir_access) << pathname2).raise();
+	}
+	changeFileRights(pathname2, 0770);
+
+	Firebird::PathName renameGuard(pathname2);
+	renameGuard += "/fb_rename_guard";
+	for(;;)
+	{
+		int gfd = creat(renameGuard.c_str(), 0600);
+		if (gfd >= 0)
+		{
+			close(gfd);
+			break;
+		}
+		if (SYSCALL_INTERRUPTED(errno))
+			continue;
+		(Arg::Gds(isc_lock_dir_access) << renameGuard).raise();
+	}
+
+	while (rename(pathname2, pathname) != 0)
+	{
+		if (SYSCALL_INTERRUPTED(errno))
+			continue;
+
+		if (errno == EEXIST || errno == ENOTEMPTY)
+		{
+			while (unlink(renameGuard.c_str()) != 0)
+			{
+				if (SYSCALL_INTERRUPTED(errno))
+					continue;
+				(Arg::Gds(isc_lock_dir_access) << pathname).raise();
+			}
+
+			while (rmdir(pathname2) != 0)
+			{
+				if (SYSCALL_INTERRUPTED(errno))
+					continue;
+				(Arg::Gds(isc_lock_dir_access) << pathname).raise();
+			}
+
+			for(;;)
+			{
+				if (access(pathname, R_OK | W_OK | X_OK) == 0)
+				{
+					if (os_utils::stat(pathname, &st) != 0)
+						system_call_failed::raise("stat");
+					if (S_ISDIR(st.st_mode))
+						return;
+					// not exactly original meaning, but very close to it
+					system_call_failed::raise("access", ENOTDIR);
+				}
+
+				if (SYSCALL_INTERRUPTED(errno))
+					continue;
+				system_call_failed::raise("access", ENOTDIR);
+			}
+
+			return;
+		}
+
+		(Arg::Gds(isc_lock_dir_access) << pathname).raise();
+	}
 }
 
 #ifndef S_IREAD
@@ -222,8 +289,9 @@ int openCreateSharedFile(const char* pathname, int flags)
 
 	if (rc != 0)
 	{
+		const int e = ERRNO;
 		close(fd);
-		raiseError(ERRNO, pathname);
+		raiseError(e, pathname);
 	}
 
 	if (S_ISLNK(st.st_mode))

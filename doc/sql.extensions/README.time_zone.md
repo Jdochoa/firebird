@@ -14,6 +14,8 @@ A time zone may be a string with a time zone region (for example, `America/Sao_P
 
 A time/timestamp with time zone is considered equal to another time/timestamp with time zone if their conversion to UTC are equal, for example, `time '10:00 -02' = time '09:00 -03'`, since both are the same as `time '12:00 GMT'`. This is also valid in the context of `UNIQUE` constraints and for sorting purposes.
 
+Some timestamps does not exist (DST starting) or repeats twice (DST ending). For the first case, when DST starts in America/New_York, 2:30 AM on March 12, 2017 does not exist and is interpreted as 2:30 AM UTC-05 (equivalent to 3:30 AM UTC-04). For the second case, when DST ends in America/New_York, 1:30 AM on November 5, 2017 repeats twice and is interpreted as 1:30 AM UTC-04 instead of 1:30 AM UTC-05.
+
 
 ## Data types
 
@@ -101,6 +103,8 @@ void encodeTimeStampTz(
 );
 ```
 
+When `decodeTimeTz` / `decodeTimeStampTz` is called with non-null `timeZoneBuffer` and ICU could not be loaded in the client, `timeZoneBuffer` returns the string `GMT*` and the others fields receives the timestamp GMT values.
+
 ## Time zone string syntax
 
 ```
@@ -157,32 +161,6 @@ set time zone '-02:00';
 set time zone 'America/Sao_Paulo';
 
 set time zone local;
-```
-
-### `SET TIME ZONE BIND` statement
-
-Changes the session time zone bind for compatibility with old clients.
-
-The default is `NATIVE`, which means that `TIME WITH TIME ZONE` and `TIMESTAMP WITH TIME ZONE` expressions are returned with they new data types to the client.
-
-Old clients may not understand the new data types, so it's possible to define the bind to `LEGACY` and the expressions will be returned as `TIME WITHOUT TIME ZONE` and `TIMESTAMP WITHOUT TIME ZONE`, with appropriate conversion.
-
-The bind configuration is also applicable to input parameters.
-
-The initial configuration of time zone bind may be specified with DPB `isc_dpb_time_zone_bind` followed by a string with its value (case does not matter).
-
-#### Syntax
-
-```
-SET TIME ZONE BIND { NATIVE | LEGACY }
-```
-
-#### Examples
-
-```
-set time zone bind native;
-
-set time zone bind legacy;
 ```
 
 ### `AT` expression
@@ -323,13 +301,17 @@ Returns:
 
 # Updating the time zone database
 
-Time zones are often changed and when this happen it's convenient to update the time zone database as soon as possible.
+Firebird uses the [IANA time zone database](http://www.iana.org/time-zones) through the ICU library.
 
-Firebird stores `WITH TIME ZONE` values translated to UTC time. If a value is created with one time zone database and later that database is updated and the update changes the information in the range of a stored value, when reading that value it will be returned as a different than the one initially stored.
+When a Firebird version is released it's released with the most up-to-date time zone database but with the time it may become outdated.
 
-Firebird uses the [IANA time zone database](http://www.iana.org/time-zones) through the ICU library. ICU library present in Firebird kit (Windows) or present in OS (Linux, POSIX) sometimes has outdated time zone database.
+An updated database can be found in [this Firebird's github page](https://github.com/FirebirdSQL/firebird/tree/master/tzdata). `le.zip` stands for little-endian and is the necessary file for most computer architectures (Intel/AMD compatible x86 or x64). `be.zip` stands for big-endian architectures.
 
-Update procedure is described in that [ICU page](http://userguide.icu-project.org/datetime/timezone#TOC-Updating-the-Time-Zone-Data). The easiest way to update is downloading the `*.res` files in a directory and set `ICU_TIMEZONE_FILES_DIR` environment variable pointing to it.
+The content of the zip file must be extracted in the `tzdata` subdirectory of Firebird's root, overwriting the others `*.res` files of the old database.
+
+Note: `<firebird root>/tzdata` is the default directory where Firebird looks for the database. It could be overriden with the `ICU_TIMEZONE_FILES_DIR` environment variable.
+
+Important note: Firebird stores `WITH TIME ZONE` values translated to UTC time. If a value is created with one time zone database and later that database is updated and the update changes the information in the range of a stored value, when reading that value it will be returned as a different value than the one initially stored.
 
 
 # Appendix: time zone regions

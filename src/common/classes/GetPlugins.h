@@ -33,6 +33,7 @@
 #include "../common/classes/auto.h"
 #include "../common/config/config.h"
 #include "../common/StatusHolder.h"
+#include "../common/classes/fb_string.h"
 
 namespace Firebird {
 
@@ -41,28 +42,32 @@ template <typename P>
 class GetPlugins
 {
 public:
-	GetPlugins(unsigned int interfaceType, const char* namesList = NULL)
-		: masterInterface(), pluginInterface(),
-		  pluginSet(NULL), currentPlugin(NULL),
-		  ls(*getDefaultMemoryPool()), status(&ls)
+	GetPlugins(unsigned int iType, const char* namesList = NULL)
+		: pluginList(*getDefaultMemoryPool()),
+		  masterInterface(), pluginInterface(),
+		  currentPlugin(NULL),
+		  ls(*getDefaultMemoryPool()), status(&ls),
+		  interfaceType(iType)
 	{
+		pluginList = namesList ? namesList : Config::getDefaultConfig()->getPlugins(interfaceType);
 		pluginSet.assignRefNoIncr(pluginInterface->getPlugins(&status, interfaceType,
-			(namesList ? namesList : Config::getDefaultConfig()->getPlugins(interfaceType)),
-			NULL));
+			pluginList.c_str(), NULL));
 		check(&status);
 
 		getPlugin();
 	}
 
-	GetPlugins(unsigned int interfaceType,
-			   const Config* knownConfig, const char* namesList = NULL)
-		: masterInterface(), pluginInterface(),
-		  pluginSet(NULL), currentPlugin(NULL),
-		  ls(*getDefaultMemoryPool()), status(&ls)
+	GetPlugins(unsigned int iType,
+			   const Config* conf, const char* namesList = NULL)
+		: pluginList(*getDefaultMemoryPool()),
+		  masterInterface(), pluginInterface(),
+		  knownConfig(conf), currentPlugin(NULL),
+		  ls(*getDefaultMemoryPool()), status(&ls),
+		  interfaceType(iType)
 	{
+		pluginList = namesList ? namesList : knownConfig->getPlugins(interfaceType);
 		pluginSet.assignRefNoIncr(pluginInterface->getPlugins(&status, interfaceType,
-			(namesList ? namesList : knownConfig->getPlugins(interfaceType)),
-			FB_NEW FirebirdConf(knownConfig)));
+			pluginList.c_str(), FB_NEW FirebirdConf(knownConfig)));
 		check(&status);
 
 		getPlugin();
@@ -97,8 +102,7 @@ public:
 	{
 		if (hasData())
 		{
-			pluginInterface->releasePlugin(currentPlugin);
-			currentPlugin = NULL;
+			removePlugin();
 
 			pluginSet->next(&status);
 			check(&status);
@@ -108,38 +112,68 @@ public:
 
 	void set(const char* newName)
 	{
-		if (hasData())
-		{
-			pluginInterface->releasePlugin(currentPlugin);
-			currentPlugin = NULL;
-		}
+		removePlugin();
 
-		pluginSet->set(&status, newName);
+		pluginList = newName;
+		pluginSet->set(&status, pluginList.c_str());
 		check(&status);
+
+		getPlugin();
+	}
+
+	void set(const Config* conf)
+	{
+		removePlugin();
+
+		knownConfig = conf;
+		pluginList = knownConfig->getPlugins(interfaceType);
+		pluginSet.assignRefNoIncr(pluginInterface->getPlugins(&status, interfaceType,
+			pluginList.c_str(), FB_NEW FirebirdConf(knownConfig)));
+		check(&status);
+
+		getPlugin();
+	}
+
+	void rewind()
+	{
+		removePlugin();
+
+		pluginSet.assignRefNoIncr(pluginInterface->getPlugins(&status, interfaceType,
+			pluginList.c_str(), knownConfig.hasData() ? FB_NEW FirebirdConf(knownConfig) : NULL));
+		check(&status);
+
 		getPlugin();
 	}
 
 	~GetPlugins()
 	{
-		if (hasData())
-		{
-			pluginInterface->releasePlugin(currentPlugin);
-			currentPlugin = NULL;
-		}
+		removePlugin();
 	}
 
 private:
+	PathName pluginList;
 	MasterInterfacePtr masterInterface;
 	PluginManagerInterfacePtr pluginInterface;
+	RefPtr<const Config> knownConfig;
 	RefPtr<IPluginSet> pluginSet;
 	P* currentPlugin;
 	LocalStatus ls;
 	CheckStatusWrapper status;
+	unsigned interfaceType;
 
 	void getPlugin()
 	{
 		currentPlugin = (P*) pluginSet->getPlugin(&status);
 		check(&status);
+	}
+
+	void removePlugin()
+	{
+		if (hasData())
+		{
+			pluginInterface->releasePlugin(currentPlugin);
+			currentPlugin = NULL;
+		}
 	}
 };
 

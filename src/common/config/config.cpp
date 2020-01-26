@@ -31,6 +31,7 @@
 #include "../jrd/constants.h"
 #include "firebird/Interface.h"
 #include "../common/db_alias.h"
+#include "../jrd/build_no.h"
 
 #ifdef HAVE_STDLIB_H
 #include <stdlib.h>
@@ -200,10 +201,10 @@ const Config::ConfigEntry Config::entries[MAX_CONFIG_KEY] =
 #endif
 	{TYPE_STRING,		"UserManager",				(ConfigValue) "Srp"},
 	{TYPE_STRING,		"TracePlugin",				(ConfigValue) "fbtrace"},
-	{TYPE_STRING,		"SecurityDatabase",			(ConfigValue) "$(dir_secDb)/security4.fdb"},	// security database name
-	{TYPE_STRING,		"ServerMode",				(ConfigValue) "Super"},
+	{TYPE_STRING,		"SecurityDatabase",			(ConfigValue) "security.db"},	// sec/db alias - rely on databases.conf
+	{TYPE_STRING,		"ServerMode",				(ConfigValue) ""},		// actual value differs in boot/regular cases
 	{TYPE_STRING,		"WireCrypt",				(ConfigValue) NULL},
-	{TYPE_STRING,		"WireCryptPlugin",			(ConfigValue) "Arc4"},
+	{TYPE_STRING,		"WireCryptPlugin",			(ConfigValue) "ChaCha, Arc4"},
 	{TYPE_STRING,		"KeyHolderPlugin",			(ConfigValue) ""},
 	{TYPE_BOOLEAN,		"RemoteAccess",				(ConfigValue) true},
 	{TYPE_BOOLEAN,		"IPv6V6Only",				(ConfigValue) false},
@@ -228,7 +229,8 @@ const Config::ConfigEntry Config::entries[MAX_CONFIG_KEY] =
 	{TYPE_INTEGER,		"SnapshotsMemSize",			(ConfigValue) 65536}, // bytes
 	{TYPE_INTEGER,		"TipCacheBlockSize",		(ConfigValue) 4194304}, // bytes
 	{TYPE_BOOLEAN,		"ReadConsistency",			(ConfigValue) true},
-	{TYPE_BOOLEAN,		"ClearGTTAtRetaining",		(ConfigValue) false}
+	{TYPE_BOOLEAN,		"ClearGTTAtRetaining",		(ConfigValue) false},
+	{TYPE_STRING,		"DataTypeCompatibility",	(ConfigValue) NULL}
 };
 
 /******************************************************************************
@@ -716,7 +718,7 @@ int Config::getServerMode()
 	}
 
 	// use default
-	rc = MODE_SUPER;
+	rc = fb_utils::bootBuild() ? MODE_CLASSIC : MODE_SUPER;
 	return rc;
 }
 
@@ -764,23 +766,58 @@ const char* Config::getPlugins(unsigned int type) const
 	return NULL;		// compiler warning silencer
 }
 
+
+// array format: major, minor, release, build
+static unsigned short fileVerNumber[4] = {FILE_VER_NUMBER};
+
+static inline unsigned int getPartialVersion()
+{
+			// major				   // minor
+	return (fileVerNumber[0] << 24) | (fileVerNumber[1] << 16);
+}
+
+static inline unsigned int getFullVersion()
+{
+								 // build_no
+	return getPartialVersion() | fileVerNumber[3];
+}
+
+static unsigned int PARTIAL_MASK = 0xFFFF0000;
+static unsigned int KEY_MASK = 0xFFFF;
+
+static inline void checkKey(unsigned int& key)
+{
+	if ((key & PARTIAL_MASK) != getPartialVersion())
+		key = KEY_MASK;
+	else
+		key &= KEY_MASK;
+}
+
+unsigned int FirebirdConf::getVersion(Firebird::CheckStatusWrapper* status)
+{
+	return getFullVersion();
+}
+
 unsigned int FirebirdConf::getKey(const char* name)
 {
-	return Config::getKeyByName(name);
+	return Config::getKeyByName(name) | getPartialVersion();
 }
 
 ISC_INT64 FirebirdConf::asInteger(unsigned int key)
 {
+	checkKey(key);
 	return config->getInt(key);
 }
 
 const char* FirebirdConf::asString(unsigned int key)
 {
+	checkKey(key);
 	return config->getString(key);
 }
 
 FB_BOOLEAN FirebirdConf::asBoolean(unsigned int key)
 {
+	checkKey(key);
 	return config->getBoolean(key);
 }
 
@@ -794,6 +831,7 @@ int FirebirdConf::release()
 
 	return 1;
 }
+
 
 const char* Config::getSecurityDatabase() const
 {
@@ -892,4 +930,9 @@ bool Config::getReadConsistency() const
 bool Config::getClearGTTAtRetaining() const
 {
 	return get<bool>(KEY_CLEAR_GTT_RETAINING);
+}
+
+const char* Config::getDataTypeCompatibility() const
+{
+	return get<const char*>(KEY_DATA_TYPE_COMPATIBILITY);
 }

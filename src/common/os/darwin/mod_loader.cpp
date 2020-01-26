@@ -28,6 +28,7 @@
 #include "firebird.h"
 
 #include "../common/os/mod_loader.h"
+#include "../common/os/os_utils.h"
 #include "../../common.h"
 #include <unistd.h>
 #include <sys/types.h>
@@ -42,12 +43,13 @@
 class DlfcnModule : public ModuleLoader::Module
 {
 public:
-	DlfcnModule(void* m)
-		: module(m)
+	DlfcnModule(MemoryPool& pool, const Firebird::PathName& aFileName, void* m)
+		: ModuleLoader::Module(pool, aFileName),
+		  module(m)
 	{}
 
 	~DlfcnModule();
-	void* findSymbol (const Firebird::string&);
+	void* findSymbol (ISC_STATUS*, const Firebird::string&);
 
 private:
 	void* module;
@@ -55,7 +57,7 @@ private:
 
 bool ModuleLoader::isLoadableModule(const Firebird::PathName& module)
 {
-	struct STAT sb;
+	struct stat sb;
 
 	if (-1 == os_utils::stat(module.c_str(), &sb))
 		return false;
@@ -123,7 +125,7 @@ ModuleLoader::Module* ModuleLoader::loadModule(ISC_STATUS* status, const Firebir
 		return 0;
 	}
 
-	return FB_NEW_POOL(*getDefaultMemoryPool()) DlfcnModule(module);
+	return FB_NEW_POOL(*getDefaultMemoryPool()) DlfcnModule(*getDefaultMemoryPool(), modPath, module);
 }
 
 DlfcnModule::~DlfcnModule()
@@ -132,7 +134,7 @@ DlfcnModule::~DlfcnModule()
 		dlclose(module);
 }
 
-void* DlfcnModule::findSymbol(const Firebird::string& symName)
+void* DlfcnModule::findSymbol(ISC_STATUS* status, const Firebird::string& symName)
 {
 	void* result = dlsym(module, symName.c_str());
 	if (result == NULL)
@@ -140,8 +142,17 @@ void* DlfcnModule::findSymbol(const Firebird::string& symName)
 		Firebird::string newSym ='_' + symName;
 		result = dlsym(module, newSym.c_str());
 	}
-	return result;
 
+	if (result == NULL && status)
+	{
+		status[0] = isc_arg_gds;
+		status[1] = isc_random;
+		status[2] = isc_arg_string;
+		status[3] = (ISC_STATUS) dlerror();
+		status[4] = isc_arg_end;
+	}
+
+	return result;
 }
 
 

@@ -127,6 +127,7 @@
 #include "../common/classes/fb_tls.h"
 #include "../common/classes/ClumpletWriter.h"
 #include "../common/classes/RefMutex.h"
+#include "../common/classes/ParsedList.h"
 #include "../common/utils_proto.h"
 #include "../jrd/DebugInterface.h"
 #include "../jrd/CryptoManager.h"
@@ -943,6 +944,64 @@ void Trigger::release(thread_db* tdbb)
 	statement = NULL;
 }
 
+
+namespace
+{
+	class DatabaseBindings : public CoercionArray
+	{
+	public:
+		DatabaseBindings(MemoryPool& p)
+			: CoercionArray(p)
+		{
+			// FB 2.5
+			versions[0].ind = getCount();
+			versions[0].txt = "2.5";
+
+			// bool compatibility
+			add().makeLegacy()->makeBoolean();
+
+			// FB 3.0
+			versions[1].ind = getCount();
+			versions[1].txt = "3.0";
+
+			// decfloat compatibility
+			add().makeLegacy()->makeDecimal128();
+
+			// int128 compatibility
+			add().makeLegacy()->makeInt128(0);
+
+			// TZ compatibility
+			add().makeLegacy()->makeTimestampTz();
+			add().makeLegacy()->makeTimeTz();
+		}
+
+		unsigned getCompatibilityIndex(const char* txt)
+		{
+			if (txt)
+			{
+				for (unsigned i = 0; i < FB_NELEM(versions); ++i)
+				{
+					if (strcmp(txt, versions[i].txt) == 0)
+						return i;
+				}
+			}
+
+			return ~0U;
+		}
+
+	private:
+		struct Version
+		{
+			unsigned ind;
+			const char* txt;
+		};
+		Version versions[2];
+	};
+
+	InitInstance<DatabaseBindings> databaseBindings;
+}
+
+
 namespace Jrd
 {
 	// Option block for database parameter block
@@ -1006,6 +1065,7 @@ namespace Jrd
 		PathName	dpb_working_directory;
 		string	dpb_set_db_charset;
 		string	dpb_network_protocol;
+		PathName	dpb_remote_crypt;
 		string	dpb_remote_address;
 		string	dpb_remote_host;
 		string	dpb_remote_os_user;
@@ -1016,8 +1076,7 @@ namespace Jrd
 		PathName	dpb_org_filename;
 		string	dpb_config;
 		string	dpb_session_tz;
-		string	dpb_time_zone_bind;
-		string	dpb_decfloat_bind;
+		PathName	dpb_set_bind;
 		string	dpb_decfloat_round;
 		string	dpb_decfloat_traps;
 
@@ -1062,57 +1121,63 @@ namespace Jrd
 		}
 	};
 
-	Attachment::InitialOptions::InitialOptions(const DatabaseOptions& options)
+	const CoercionArray* Database::getBindings() const
 	{
-		if (options.dpb_time_zone_bind.hasData())
-		{
-			auto option = options.dpb_time_zone_bind;
-			option.lower();
+		return &(databaseBindings());
+	}
 
-			if (option == "legacy")
-				timeZoneBind = TimeZoneUtil::BIND_LEGACY;
-			else if (option == "native")
-				timeZoneBind = TimeZoneUtil::BIND_NATIVE;
-			else
-				(Arg::Gds(isc_invalid_time_zone_bind) << option).raise();
+	void Attachment::setInitialOptions(thread_db* tdbb, DatabaseOptions& options, bool newDb)
+	{
+		if (newDb)
+		{
+			Database* dbb = tdbb->getDatabase();
+			const char* dataTypeCompatibility = dbb->dbb_config->getDataTypeCompatibility();
+			dbb->dbb_compatibility_index = databaseBindings().getCompatibilityIndex(dataTypeCompatibility);
 		}
 
-		if (options.dpb_decfloat_bind.hasData())
+		att_initial_options.setInitialOptions(tdbb, options);
+		att_initial_options.resetAttachment(this);
+	}
+
+
+	void Attachment::InitialOptions::setInitialOptions(thread_db* tdbb, const DatabaseOptions& options)
+	{
+		if (options.dpb_set_bind.hasData())
 		{
-			auto option = options.dpb_decfloat_bind;
-			option.lower();
+			ParsedList rules(options.dpb_set_bind, ";");
+			Attachment* att = tdbb->getAttachment();
+			AutoSetRestore<CoercionArray*> defSet(&att->att_dest_bind, getBindings());
 
-			if (option == "native")
-				decFloatBinding = DecimalBinding::DEFAULT;
-			else if (option == "char" || option == "character")
-				decFloatBinding = DecimalBinding(DecimalBinding::DEC_TEXT);
-			else if (option == "double" || option == "double precision")
-				decFloatBinding = DecimalBinding(DecimalBinding::DEC_DOUBLE);
-			else if (option == "bigint")
-				decFloatBinding = DecimalBinding(DecimalBinding::DEC_NUMERIC);
-			else if (option.substr(0, 7) == "bigint,")
+			for (unsigned i = 0; i < rules.getCount(); ++i)
 			{
-				const char* p = option.c_str() + 7;
+				rules[i].insert(0, "SET BIND OF ");
 
-				while (*p == ' ')
-					++p;
-
-				const char* start = p;
-				int scale = 0;
-
-				while (*p >= '0' && *p <= '9')
+				try
 				{
-					scale = scale * 10 + (*p - '0');
-					++p;
+					AutoPreparedStatement ps(att->prepareStatement(tdbb, nullptr, rules[i].ToString()));
+					ps->execute(tdbb, nullptr);
 				}
+				catch (const Exception& ex)
+				{
+					FbLocalStatus status;
+					ex.stuffException(&status);
 
-				if (*p != '\0' || p - start == 0 || p - start > 2 || scale > DecimalBinding::MAX_SCALE)
-					(Arg::Gds(isc_invalid_decfloat_bind) << option).raise();
+					// strip spam messages
+					const ISC_STATUS* v = status->getErrors();
+					for (; v[0] == isc_arg_gds; v = fb_utils::nextArg(v))
+					{
+						if (v[1] != isc_dsql_error && v[1] != isc_sqlerr)
+							break;
+					}
 
-				decFloatBinding = DecimalBinding(DecimalBinding::DEC_NUMERIC, static_cast<SCHAR>(-scale));
+					// build and throw new vector
+					Arg::Gds newErr(isc_bind_err);
+					newErr << options.dpb_set_bind <<
+						Arg::Gds(isc_bind_statement) << rules[i];
+					newErr << Arg::StatusVector(v);
+					newErr.raise();
+				}
 			}
-			else
-				(Arg::Gds(isc_invalid_decfloat_bind) << option).raise();
 		}
 
 		if (options.dpb_decfloat_round.hasData())
@@ -1164,19 +1229,19 @@ namespace Jrd
 
 		originalTimeZone = options.dpb_session_tz.isEmpty() ?
 			TimeZoneUtil::getSystemTimeZone() :
-			originalTimeZone = TimeZoneUtil::parse(
-				options.dpb_session_tz.c_str(), options.dpb_session_tz.length());
+			TimeZoneUtil::parse(options.dpb_session_tz.c_str(), options.dpb_session_tz.length());
 	}
 
 	void Attachment::InitialOptions::resetAttachment(Attachment* attachment) const
 	{
 		// reset DecFloat options
 		attachment->att_dec_status = decFloatStatus;
-		attachment->att_dec_binding = decFloatBinding;
 
 		// reset time zone options
-		attachment->att_timezone_bind = timeZoneBind;
 		attachment->att_current_timezone = attachment->att_original_timezone = originalTimeZone;
+
+		// reset bindings
+		attachment->att_bindings.clear();
 	}
 }	// namespace Jrd
 
@@ -1676,9 +1741,11 @@ JAttachment* JProvider::internalAttach(CheckStatusWrapper* user_status, const ch
 
 			TRA_init(attachment);
 
+			bool newDb = false;
 			if (dbb->dbb_flags & DBB_new)
 			{
 				// If we're a not a secondary attachment, initialize some stuff
+				newDb = true;
 
 				// NS: Use alias as database ID only if accessing database using file name is not possible.
 				//
@@ -2069,6 +2136,7 @@ JAttachment* JProvider::internalAttach(CheckStatusWrapper* user_status, const ch
 
 			CCH_init2(tdbb);
 			VIO_init(tdbb);
+			attachment->setInitialOptions(tdbb, options, newDb);
 
 			CCH_release_exclusive(tdbb);
 
@@ -3001,6 +3069,8 @@ JAttachment* JProvider::createDatabase(CheckStatusWrapper* user_status, const ch
 			PAG_attachment_id(tdbb);
 
 			Monitoring::publishAttachment(tdbb);
+
+			attachment->setInitialOptions(tdbb, options, true);
 
 			CCH_release_exclusive(tdbb);
 
@@ -6901,6 +6971,9 @@ void DatabaseOptions::get(const UCHAR* dpb, USHORT dpb_length, bool& invalid_cli
 							case isc_dpb_addr_flags:
 								dpb_remote_flags = address.getInt();
 								break;
+							case isc_dpb_addr_crypt:
+								address.getPath(dpb_remote_crypt);
+								break;
 							default:
 								break;
 						}
@@ -6962,12 +7035,8 @@ void DatabaseOptions::get(const UCHAR* dpb, USHORT dpb_length, bool& invalid_cli
 			dpb_replica_mode = (ReplicaMode) rdr.getInt();
 			break;
 
-		case isc_dpb_time_zone_bind:
-			rdr.getString(dpb_time_zone_bind);
-			break;
-
-		case isc_dpb_decfloat_bind:
-			rdr.getString(dpb_decfloat_bind);
+		case isc_dpb_set_bind:
+			rdr.getPath(dpb_set_bind);
 			break;
 
 		case isc_dpb_decfloat_round:
@@ -7203,14 +7272,14 @@ static JAttachment* create_attachment(const PathName& alias_name,
 			status_exception::raise(Arg::Gds(isc_att_shutdown));
 		}
 
-		Attachment::InitialOptions initialOptions(options);
-		attachment = Attachment::create(dbb, &initialOptions);
+		attachment = Attachment::create(dbb);
 		attachment->att_next = dbb->dbb_attachments;
 		dbb->dbb_attachments = attachment;
 	}
 
 	attachment->att_filename = alias_name;
 	attachment->att_network_protocol = options.dpb_network_protocol;
+	attachment->att_remote_crypt = options.dpb_remote_crypt;
 	attachment->att_remote_address = options.dpb_remote_address;
 	attachment->att_remote_pid = options.dpb_remote_pid;
 	attachment->att_remote_flags = options.dpb_remote_flags;

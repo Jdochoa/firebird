@@ -30,7 +30,7 @@
 #define BURP_BURP_H
 
 #include <stdio.h>
-#include "../jrd/ibase.h"
+#include "ibase.h"
 #include "firebird/Interface.h"
 #include "firebird/Message.h"
 #include "../common/dsc.h"
@@ -42,7 +42,7 @@
 #include "../common/classes/array.h"
 #include "../common/classes/fb_pair.h"
 #include "../common/classes/MetaName.h"
-#include "../jrd/SimilarToMatcher.h"
+#include "../common/SimilarToRegex.h"
 #include "../common/status.h"
 #include "../common/sha.h"
 #include "../common/classes/ImplementHelper.h"
@@ -114,7 +114,8 @@ enum rec_type {
 	rec_collation,			// Collations
 	rec_sql_roles,			// SQL roles
 	rec_mapping,			// Mapping of security names
-	rec_package				// Package
+	rec_package,			// Package
+	rec_db_creator			// Database creator
 };
 
 
@@ -625,7 +626,11 @@ enum att_type {
 	att_package_security_class,
 	att_package_owner_name,
 	att_package_description,
-	att_package_sql_security
+	att_package_sql_security,
+
+	// Database creators
+	att_dbc_user = SERIES,
+	att_dbc_type
 };
 
 
@@ -894,26 +899,6 @@ static const char HDR_SPLIT_TAG6[]	= "InterBase/gbak,   ";
 const FB_UINT64 MIN_SPLIT_SIZE	= FB_CONST64(2048);		// bytes
 
 
-// Copy&paste from TraceUnicodeUtils.h - fixme !!!!!!!!
-class UnicodeCollationHolder
-{
-private:
-	charset* cs;
-	texttype* tt;
-	Firebird::AutoPtr<Jrd::CharSet> charSet;
-	Firebird::AutoPtr<Jrd::TextType> textType;
-
-public:
-	explicit UnicodeCollationHolder(Firebird::MemoryPool& pool);
-	~UnicodeCollationHolder();
-
-	Jrd::TextType* getTextType()
-	{
-		return textType;
-	}
-};
-
-
 // Global switches and data
 
 struct BurpCrypt;
@@ -1118,6 +1103,7 @@ public:
 	Firebird::IRequest*	handles_get_security_class_req_handle1;
 	Firebird::IRequest*	handles_get_sql_roles_req_handle1;
 	Firebird::IRequest*	handles_get_mapping_req_handle1;
+	Firebird::IRequest* handles_db_creators_req_handle1;
 	Firebird::IRequest*	handles_get_trigger_message_req_handle1;
 	Firebird::IRequest*	handles_get_trigger_message_req_handle2;
 	Firebird::IRequest*	handles_get_trigger_old_req_handle1;
@@ -1159,6 +1145,7 @@ public:
 		ThreadData::restoreSpecific();
 	}
 	void setupSkipData(const Firebird::string& regexp);
+	void setupIncludeData(const Firebird::string& regexp);
 	bool skipRelation(const char* name);
 
 	char veryEnd;
@@ -1173,9 +1160,10 @@ public:
 	ULONG verboseInterval;	// How many records should be backed up or restored before we show this message
 	bool flag_on_line;		// indicates whether we will bring the database on-line
 	bool firstMap;			// this is the first time we entered get_mapping()
+	bool firstDbc;			// this is the first time we entered get_db_creators()
 	bool stdIoMode;			// stdin or stdout is used as backup file
-	Firebird::AutoPtr<UnicodeCollationHolder> unicodeCollation;
-	Firebird::AutoPtr<Firebird::SimilarToMatcher<UCHAR, Jrd::UpcaseConverter<> > > skipDataMatcher;
+	Firebird::AutoPtr<Firebird::SimilarToRegex> skipDataMatcher;
+	Firebird::AutoPtr<Firebird::SimilarToRegex> includeDataMatcher;
 
 public:
 	Firebird::string toSystem(const Firebird::PathName& from);

@@ -46,7 +46,7 @@ ZLib::ZLib(Firebird::MemoryPool&)
 
 void ZLib::symbols()
 {
-#define FB_ZSYMB(A) z->findSymbol(STRINGIZE(A), A); if (!A) { z.reset(NULL); return; }
+#define FB_ZSYMB(A) z->findSymbol(status, STRINGIZE(A), A); if (!A) { z.reset(NULL); return; }
 	FB_ZSYMB(deflateInit_)
 	FB_ZSYMB(inflateInit_)
 	FB_ZSYMB(deflate)
@@ -56,11 +56,16 @@ void ZLib::symbols()
 #undef FB_ZSYMB
 }
 
-//	Firebird::InitInstance<ZLib> zlib;
-
 void* ZLib::allocFunc(void*, uInt items, uInt size)
 {
-	return MemoryPool::globalAlloc(items * size ALLOC_ARGS);
+	try
+	{
+		return MemoryPool::globalAlloc(items * size ALLOC_ARGS);
+	}
+	catch (const Exception&)
+	{
+		return nullptr;
+	}
 }
 
 void ZLib::freeFunc(void*, void* address)

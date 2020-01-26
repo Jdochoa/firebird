@@ -76,7 +76,11 @@ Syntax and notes :
 	This transaction lifetime is bound to the lifetime of current (local) transaction 
 	and commits\rolled back the same way as current transaction.
 
-- by default COMMON TRANSACTION is used
+- by default COMMON TRANSACTION is used.
+
+- if local transaction is READ COMMITTED READ CONSISTENCY and if external data source not
+	supported this isolation mode, then external transaction will run with CONCURRENCY 
+	isolation mode.
 
 - if PASSWORD clause is omitted then 
 	a) if <user_name> is omitted, NULL or equal to CURRENT_USER value and

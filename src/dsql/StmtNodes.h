@@ -24,12 +24,13 @@
 #define DSQL_STMT_NODES_H
 
 #include "../common/classes/MetaName.h"
-#include "../jrd/blr.h"
+#include "firebird/impl/blr.h"
 #include "../jrd/Function.h"
 #include "../jrd/extds/ExtDS.h"
 #include "../dsql/Nodes.h"
 #include "../dsql/DdlNodes.h"
 #include "../dsql/NodePrinter.h"
+#include "../common/DecFloat.h"
 
 namespace Jrd {
 
@@ -1748,11 +1749,13 @@ public:
 };
 
 
-class SetDecFloatBindNode : public SessionManagementNode
+class SetBindNode : public SessionManagementNode
 {
 public:
-	SetDecFloatBindNode(MemoryPool& pool)
-		: SessionManagementNode(pool)
+	SetBindNode(MemoryPool& pool)
+		: SessionManagementNode(pool),
+		  from(nullptr),
+		  to(nullptr)
 	{
 	}
 
@@ -1761,16 +1764,18 @@ public:
 	{
 		SessionManagementNode::internalPrint(printer);
 
-		NODE_PRINT(printer, bind.bind);
-		NODE_PRINT(printer, bind.numScale);
+		NODE_PRINT(printer, from);
+		NODE_PRINT(printer, to);
 
-		return "SetDecFloatBindNode";
+		return "SetBindNode";
 	}
 
+	virtual SessionManagementNode* dsqlPass(DsqlCompilerScratch* dsqlScratch);
 	virtual void execute(thread_db* tdbb, dsql_req* request, jrd_tra** traHandle) const;
 
 public:
-	Firebird::DecimalBinding bind;
+	dsql_fld *from;
+	dsql_fld *to;
 };
 
 
@@ -1807,32 +1812,6 @@ public:
 public:
 	Firebird::string str;
 	bool local;
-};
-
-
-class SetTimeZoneBindNode : public SessionManagementNode
-{
-public:
-	SetTimeZoneBindNode(MemoryPool& pool, Firebird::TimeZoneUtil::Bind aBind)
-		: SessionManagementNode(pool),
-		  bind(aBind)
-	{
-	}
-
-public:
-	virtual Firebird::string internalPrint(NodePrinter& printer) const
-	{
-		SessionManagementNode::internalPrint(printer);
-
-		NODE_PRINT(printer, bind);
-
-		return "SetTimeZoneBindNode";
-	}
-
-	virtual void execute(thread_db* tdbb, dsql_req* request, jrd_tra** traHandle) const;
-
-public:
-	Firebird::TimeZoneUtil::Bind bind;
 };
 
 

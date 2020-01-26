@@ -31,7 +31,7 @@
 #include "firebird.h"
 #include <stdio.h>
 #include <string.h>
-#include "../jrd/ibase.h"			// fb_shutdown_callback() is used from it
+#include "ibase.h"			// fb_shutdown_callback() is used from it
 #include "../common/gdsassert.h"
 #ifdef UNIX
 #include "../common/file_params.h"
@@ -54,7 +54,7 @@
 #endif
 #include "../common/isc_proto.h"
 #include "../jrd/constants.h"
-#include "../jrd/inf_pub.h"
+#include "firebird/impl/inf_pub.h"
 #include "../common/classes/init.h"
 #include "../common/classes/semaphore.h"
 #include "../common/classes/ClumpletWriter.h"
@@ -74,6 +74,7 @@
 #include "../common/enc_proto.h"
 #include "../common/classes/InternalMessageBuffer.h"
 #include "../common/os/os_utils.h"
+#include "../common/security.h"
 
 using namespace Firebird;
 
@@ -986,8 +987,66 @@ private:
 
 class CryptKeyTypeManager : public PermanentStorage
 {
+private:
+    class CryptKeyType;
+
+public:
+	static const unsigned BITS64 = sizeof(FB_UINT64) * 8u;
+
+	class SpecificPlugins
+	{
+	public:
+		SpecificPlugins(CryptKeyType& t)
+			: knownType(t), n(0)
+		{
+			scan();
+		}
+
+		bool hasData()
+		{
+			return n < knownType.plugins.getCount();
+		}
+
+		const PathName& get()
+		{
+			if (hasData())
+				return knownType.plugins[n];
+
+			fb_assert(false);
+			fatal_exception::raise("Error using CryptKeyTypeManager");
+
+			// compiler warning silencer
+			return knownType.plugins[0];
+		}
+
+		void next()
+		{
+			if (hasData())
+			{
+				++n;
+				scan();
+			}
+		}
+
+	private:
+		CryptKeyType& knownType;
+		unsigned n;
+
+		void scan()
+		{
+			while (hasData())
+			{
+				if (knownType.hasSpecificData & (CryptKeyType::one << n))
+					break;
+				++n;
+			}
+		}
+	};
+
+private:
 	class CryptKeyType : public PermanentStorage
 	{
+		friend class SpecificPlugins;
 	public:
 		explicit CryptKeyType(MemoryPool& p)
 			: PermanentStorage(p), keyType(getPool()), plugins(getPool())
@@ -998,26 +1057,34 @@ class CryptKeyTypeManager : public PermanentStorage
 			return keyType == t;
 		}
 
-		void set(const PathName& t, const PathName& p)
+		void set(const PathName& t, const PathName& p, bool hasSpecData)
 		{
 			fb_assert(keyType.isEmpty() && plugins.isEmpty());
 			keyType = t;
-			plugins.add() = p;
+			add(p, hasSpecData);
 		}
 
-		void add(const PathName& p)
+		void add(const PathName& p, bool hasSpecData)
 		{
-			plugins.add() = p;		// Here we assume that init code runs once, i.e. plugins do not repeat
+			// Here we assume that init code runs once, i.e. plugins do not repeat
+			if (hasSpecData)
+			{
+				fb_assert(plugins.getCount() < 64);
+				hasSpecificData |= (one << plugins.getCount());
+			}
+			plugins.add() = p;
 		}
 
 		void value(PathName& to) const
 		{
-			REMOTE_makeList(to, plugins);
+			plugins.makeList(to);
 		}
 
 	private:
 		PathName keyType;
-		Remote::ParsedList plugins;
+		ParsedList plugins;
+		FB_UINT64 hasSpecificData;
+		static const FB_UINT64 one = 1u;
 	};
 
 public:
@@ -1030,20 +1097,22 @@ public:
 		{
 			const char* list = cpItr.plugin()->getKnownTypes(&st);
 			check(&st);
-
 			fb_assert(list);
-			Remote::ParsedList newTypes;
-			REMOTE_parseList(newTypes, PathName(list));
+			PathName tmp(list);
+			ParsedList newTypes(tmp);
 
 			PathName plugin(cpItr.name());
 			for (unsigned i = 0; i < newTypes.getCount(); ++i)
 			{
+				unsigned l;
+				bool hasSpecific = cpItr.plugin()->getSpecificData(&st, newTypes[i].c_str(), &l) != nullptr;
+
 				bool found = false;
 				for (unsigned j = 0; j < knownTypes.getCount(); ++j)
 				{
 					if (knownTypes[j] == newTypes[i])
 					{
-						knownTypes[j].add(plugin);
+						knownTypes[j].add(plugin, hasSpecific);
 						found = true;
 						break;
 					}
@@ -1051,7 +1120,7 @@ public:
 
 				if (!found)
 				{
-					knownTypes.add().set(newTypes[i], plugin);
+					knownTypes.add().set(newTypes[i], plugin, hasSpecific);
 				}
 			}
 		}
@@ -1059,21 +1128,39 @@ public:
 
 	PathName operator[](const PathName& keyType) const
 	{
-		for (unsigned j = 0; j < knownTypes.getCount(); ++j)
+		unsigned pos = getPos(keyType);
+		if (pos == ~0u)
+			return "";
+
+		PathName rc;
+		knownTypes[pos].value(rc);
+		return rc;
+	}
+
+	SpecificPlugins getSpecific(const PathName& keyType)
+	{
+		unsigned pos = getPos(keyType);
+		if (pos == ~0u)
 		{
-			if (knownTypes[j] == keyType)
-			{
-				PathName rc;
-				knownTypes[j].value(rc);
-				return rc;
-			}
+			fb_assert(false);
+			fatal_exception::raise("Error using CryptKeyTypeManager");
 		}
 
-		return "";
+		return SpecificPlugins(knownTypes[pos]);
 	}
 
 private:
 	ObjectsArray<CryptKeyType> knownTypes;
+
+	unsigned getPos(const PathName& keyType) const
+	{
+		for (unsigned j = 0; j < knownTypes.getCount(); ++j)
+		{
+			if (knownTypes[j] == keyType)
+				return j;
+		}
+		return ~0u;
+	}
 };
 
 InitInstance<CryptKeyTypeManager> knownCryptKeyTypes;
@@ -1883,6 +1970,7 @@ static bool accept_connection(rem_port* port, P_CNCT* connect, PACKET* send)
 	if (type == ptype_lazy_send)
 		port->port_flags |= PORT_lazy;
 
+	port->port_client_arch = connect->p_cnct_client;
 
 	Firebird::ClumpletReader id(Firebird::ClumpletReader::UnTagged,
 								connect->p_cnct_user_id.cstr_address,
@@ -1994,6 +2082,7 @@ static bool accept_connection(rem_port* port, P_CNCT* connect, PACKET* send)
 						}
 						port->port_srv_auth_block->setPluginName(plugins->name());
 						port->port_srv_auth_block->extractPluginName(&send->p_acpd.p_acpt_plugin);
+						returnData = true;
 						break;
 
 					case IAuth::AUTH_MORE_DATA:
@@ -2239,7 +2328,10 @@ static void addClumplets(ClumpletWriter* dpb_buffer,
 		flags |= isc_dpb_addr_flag_conn_compressed;
 #endif
 	if (port->port_crypt_plugin)
+	{
 		flags |= isc_dpb_addr_flag_conn_encrypted;
+		address_record.insertString(isc_dpb_addr_crypt, port->port_crypt_name);
+	}
 
 	if (flags)
 		address_record.insertInt(isc_dpb_addr_flags, flags);
@@ -3734,7 +3826,17 @@ ISC_STATUS rem_port::execute_statement(P_OP op, P_SQLDATA* sqldata, PACKET* send
 	check(&status_vector);
 
 	statement->rsr_iface->setTimeout(&status_vector, sqldata->p_sqldata_timeout);
-	check(&status_vector);
+	if ((status_vector.getState() & IStatus::STATE_ERRORS) &&
+		(status_vector.getErrors()[1] == isc_interface_version_too_old))
+	{
+		if (sqldata->p_sqldata_timeout)
+		{
+			(Arg::Gds(isc_wish_list) <<
+			 Arg::Gds(isc_random) << "Timeouts not supported by selected on server provider").raise();
+		}
+	}
+	else
+		check(&status_vector);
 
 	if ((flags & IStatement::FLAG_HAS_CURSOR) && (out_msg_length == 0))
 	{
@@ -6022,7 +6124,7 @@ void rem_port::start_crypt(P_CRYPT * crypt, PACKET* sendL)
 		PathName keyName(crypt->p_key.cstr_address, crypt->p_key.cstr_length);
 		for (unsigned k = 0; k < port_crypt_keys.getCount(); ++k)
 		{
-			if (keyName == port_crypt_keys[k]->t)
+			if (keyName == port_crypt_keys[k]->keyName)
 			{
 				key = port_crypt_keys[k];
 				break;
@@ -6036,9 +6138,7 @@ void rem_port::start_crypt(P_CRYPT * crypt, PACKET* sendL)
 
 		PathName plugName(crypt->p_plugin.cstr_address, crypt->p_plugin.cstr_length);
 		// Check it's availability
-		Remote::ParsedList plugins;
-
-		REMOTE_parseList(plugins, Config::getDefaultConfig()->getPlugins(
+		ParsedList plugins(Config::getDefaultConfig()->getPlugins(
 			IPluginManager::TYPE_WIRE_CRYPT));
 
 		bool found = false;
@@ -6065,6 +6165,12 @@ void rem_port::start_crypt(P_CRYPT * crypt, PACKET* sendL)
 		// Initialize crypt key
 		LocalStatus ls;
 		CheckStatusWrapper st(&ls);
+		const UCharBuffer* specificData = this->findSpecificData(keyName, plugName);
+		if (specificData)
+		{
+			cp.plugin()->setSpecificData(&st, keyName.c_str(), specificData->getCount(), specificData->begin());
+			check(&st, isc_wish_list);
+		}
 		cp.plugin()->setKey(&st, key);
 		check(&st);
 
@@ -6072,15 +6178,60 @@ void rem_port::start_crypt(P_CRYPT * crypt, PACKET* sendL)
 		port_crypt_plugin = cp.plugin();
 		port_crypt_plugin->addRef();
 		port_crypt_complete = true;
+		port_crypt_name = cp.name();
 
 		send_response(sendL, 0, 0, &st, false);
-		WIRECRYPT_DEBUG(fprintf(stderr, "Installed cipher %s\n", cp.name()));
+		WIRECRYPT_DEBUG(fprintf(stderr, "Srv: Installed cipher %s\n", cp.name()));
 	}
 	catch (const Exception& ex)
 	{
 		iscLogException("start_crypt:", ex);
 		disconnect(NULL, NULL);
 	}
+}
+
+
+const UCharBuffer* rem_port::findSpecificData(const PathName& type, const PathName& plugin)
+{
+	for (unsigned i = 0; i < port_known_server_keys.getCount(); ++i)
+	{
+		//KnownServerKey
+		auto& k = port_known_server_keys[i];
+		if (k.type != type)
+			continue;
+		auto* rc = k.findSpecificData(plugin);
+		if (rc)
+			return rc;
+	}
+
+	return nullptr;
+}
+
+
+void rem_port::addSpecificData(const PathName& type, const PathName& plugin, unsigned length, const void* data)
+{
+	KnownServerKey* key = nullptr;
+	for (unsigned i = 0; i < port_known_server_keys.getCount(); ++i)
+	{
+		//KnownServerKey
+		auto& k = port_known_server_keys[i];
+		if (k.type == type)
+		{
+			key = &k;
+			break;
+		}
+	}
+
+	if (!key)
+	{
+		key = &port_known_server_keys.add();
+		key->type = type;
+	}
+
+	//KnownServerKey::PluginSpecific
+	auto& p = key->specificData.add();
+	p.first = plugin;
+	memcpy(p.second.getBuffer(length), data, length);
 }
 
 
@@ -6955,13 +7106,10 @@ void SrvAuthBlock::createPluginsItr()
 		return;
 	}
 
-	Remote::ParsedList fromClient;
-	REMOTE_parseList(fromClient, pluginList);
+	ParsedList fromClient(pluginList);
+	ParsedList onServer(port->getPortConfig()->getPlugins(IPluginManager::TYPE_AUTH_SERVER));
+	ParsedList final;
 
-	Remote::ParsedList onServer;
-	REMOTE_parseList(onServer, port->getPortConfig()->getPlugins(IPluginManager::TYPE_AUTH_SERVER));
-
-	Remote::ParsedList final;
 	for (unsigned s = 0; s < onServer.getCount(); ++s)
 	{
 		// do not expect too long lists, therefore use double loop
@@ -7013,7 +7161,7 @@ void SrvAuthBlock::createPluginsItr()
 		final.push(onServer[onServer.getCount() - 1]);
 	}
 
-	REMOTE_makeList(pluginList, final);
+	final.makeList(pluginList);
 
 	RefPtr<const Config> portConf(port->getPortConfig());
 	plugins = FB_NEW AuthServerPlugins(IPluginManager::TYPE_AUTH_SERVER, portConf, pluginList.c_str());
@@ -7041,18 +7189,44 @@ bool SrvAuthBlock::extractNewKeys(CSTRING* to, ULONG flags)
 	{
 		for (unsigned n = 0; n < newKeys.getCount(); ++n)
 		{
-			const PathName& t = newKeys[n]->t;
+			const PathName& t = newKeys[n]->keyName;
 			PathName plugins = knownCryptKeyTypes()[t];
 			if (plugins.hasData())
 			{
-				lastExtractedKeys.insertPath(TAG_KEY_TYPE, t);
-				lastExtractedKeys.insertPath(TAG_KEY_PLUGINS, plugins);
+				lastExtractedKeys.insertString(TAG_KEY_TYPE, t);
+				lastExtractedKeys.insertString(TAG_KEY_PLUGINS, plugins);
+
+				if (port->port_protocol < PROTOCOL_VERSION16)
+					continue;
+
+				for (CryptKeyTypeManager::SpecificPlugins sp(knownCryptKeyTypes().getSpecific(t)); sp.hasData(); sp.next())
+				{
+					PathName plugin = sp.get();
+					GetPlugins<IWireCryptPlugin> cp(IPluginManager::TYPE_WIRE_CRYPT);
+					fb_assert(cp.hasData());
+					if (cp.hasData())
+					{
+						LocalStatus ls;
+						CheckStatusWrapper st(&ls);
+						unsigned l;
+						const unsigned char* d = cp.plugin()->getSpecificData(&st, t.c_str(), &l);
+						check(&st, isc_wish_list);
+						if (d)
+						{
+							port->addSpecificData(t, plugin, l, d);
+
+							plugin += '\0';
+							plugin.append(reinterpret_cast<const char*>(d), l);
+							lastExtractedKeys.insertString(TAG_PLUGIN_SPECIFIC, plugin);
+						}
+					}
+				}
 			}
 		}
 
 		if ((flags & EXTRACT_PLUGINS_LIST) && (dataFromPlugin.getCount() == 0))
 		{
-			lastExtractedKeys.insertPath(TAG_KNOWN_PLUGINS, pluginList);
+			lastExtractedKeys.insertString(TAG_KNOWN_PLUGINS, pluginList);
 		}
 	}
 

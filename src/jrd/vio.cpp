@@ -48,7 +48,7 @@
 #include "../jrd/val.h"
 #include "../jrd/req.h"
 #include "../jrd/tra.h"
-#include "gen/ids.h"
+#include "../jrd/ids.h"
 #include "../jrd/lck.h"
 #include "../jrd/lls.h"
 #include "../jrd/scl.h"
@@ -1257,6 +1257,15 @@ void VIO_copy_record(thread_db* tdbb, record_param* org_rpb, record_param* new_r
 	Record* const new_record = new_rpb->rpb_record;
 	fb_assert(org_record && new_record);
 
+	// dimitr:	Clear the req_null flag that may stay active after the last
+	//			boolean evaluation. Here we use only EVL_field() calls that
+	//			do not touch this flag and data copying is done only for
+	//			non-NULL fields, so req_null should never be seen inside blb::move().
+	//			See CORE-6090 for details.
+
+	jrd_req* const request = tdbb->getRequest();
+	request->req_flags &= ~req_null;
+
 	// Copy the original record to the new record. If the format hasn't changed,
 	// this is a simple move. If the format has changed, each field must be
 	// fetched and moved separately, remembering to set the missing flag.
@@ -1275,8 +1284,18 @@ void VIO_copy_record(thread_db* tdbb, record_param* org_rpb, record_param* new_r
 			{
 				if (EVL_field(org_rpb->rpb_relation, org_record, i, &org_desc))
 				{
-					if (DTYPE_IS_BLOB_OR_QUAD(org_desc.dsc_dtype) || DTYPE_IS_BLOB_OR_QUAD(new_desc.dsc_dtype))
-						Jrd::blb::move(tdbb, &org_desc, &new_desc, new_rpb, i);
+					// If the source is not a blob or it's a temporary blob,
+					// then we'll need to materialize the resulting blob.
+					// Thus blb::move() is called with rpb and field ID.
+					// See also CORE-5600.
+
+					const bool materialize =
+						(DTYPE_IS_BLOB_OR_QUAD(new_desc.dsc_dtype) &&
+							!(DTYPE_IS_BLOB_OR_QUAD(org_desc.dsc_dtype) &&
+								((bid*) org_desc.dsc_address)->bid_internal.bid_relation_id));
+
+					if (materialize)
+						blb::move(tdbb, &org_desc, &new_desc, new_rpb, i);
 					else
 						MOV_move(tdbb, &org_desc, &new_desc);
 				}
@@ -2527,6 +2546,12 @@ bool VIO_get_current(thread_db* tdbb,
 #endif
 
 		// Get data if there is data.
+
+		if (rpb->rpb_flags & rpb_damaged)
+		{
+			CCH_RELEASE(tdbb, &rpb->getWindow(tdbb));
+			return false;
+		}
 
 		if (rpb->rpb_flags & rpb_deleted)
 			CCH_RELEASE(tdbb, &rpb->getWindow(tdbb));
@@ -4163,7 +4188,7 @@ static void check_rel_field_class(thread_db* tdbb,
 			// he may have access to relation as whole.
 			try
 			{
-				SCL_check_access(tdbb, s_class, 0, 0, NULL, flags, SCL_object_column, false, "");
+				SCL_check_access(tdbb, s_class, 0, NULL, flags, SCL_object_column, false, "");
 			}
 			catch (const Firebird::Exception&)
 			{
@@ -4712,7 +4737,7 @@ void Database::garbage_collector(Database* dbb)
 		UserId user;
 		user.setUserName("Garbage Collector");
 
-		Jrd::Attachment* const attachment = Jrd::Attachment::create(dbb, nullptr);
+		Jrd::Attachment* const attachment = Jrd::Attachment::create(dbb);
 		RefPtr<SysStableAttachment> sAtt(FB_NEW SysStableAttachment(attachment));
 		attachment->setStable(sAtt);
 		attachment->att_filename = dbb->dbb_filename;

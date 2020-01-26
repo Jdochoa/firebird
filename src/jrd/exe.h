@@ -64,7 +64,6 @@ DEFINE_TRACE_ROUTINE(cmp_trace);
 #endif
 
 class VaryingString;
-struct dsc;
 
 namespace Jrd {
 
@@ -463,6 +462,7 @@ public:
 		csb_currentForNode(NULL),
 		csb_currentDMLNode(NULL),
 		csb_currentAssignTarget(NULL),
+		csb_preferredDesc(NULL),
 		csb_rpt(p)
 	{
 		csb_dbg_info = FB_NEW_POOL(p) Firebird::DbgInfo(p);
@@ -543,8 +543,9 @@ public:
 	Firebird::GenericMap<Firebird::Left<Firebird::MetaName, DeclareSubProcNode*> > subProcedures;
 
 	ForNode*	csb_currentForNode;
-	StmtNode*	csb_currentDMLNode;	// could be StoreNode or ModifyNode
+	StmtNode*	csb_currentDMLNode;		// could be StoreNode or ModifyNode
 	ExprNode*	csb_currentAssignTarget;
+	dsc*		csb_preferredDesc;		// expected by receiving side data format
 
 	struct csb_repeat
 	{

@@ -700,7 +700,7 @@ class InternalCryptKey FB_FINAL :
 {
 public:
 	InternalCryptKey()
-		: t(getPool())
+		: keyName(getPool())
 	{ }
 
 	// ICryptKey implementation
@@ -735,8 +735,61 @@ public:
 	};
 
 	Key encrypt, decrypt;
-	Firebird::PathName t;
+	Firebird::PathName keyName;
 };
+
+
+
+// Type of known by server key, received from it by client
+class KnownServerKey : public Firebird::AutoStorage
+{
+public:
+	Firebird::PathName type, plugins;
+	typedef Firebird::Pair<Firebird::Full<Firebird::PathName, Firebird::UCharBuffer> > PluginSpecific;
+	Firebird::ObjectsArray<PluginSpecific> specificData;
+
+	KnownServerKey()
+		: Firebird::AutoStorage(), type(getPool()), plugins(getPool()), specificData(getPool())
+	{ }
+
+	explicit KnownServerKey(Firebird::MemoryPool& p)
+		: Firebird::AutoStorage(p), type(getPool()), plugins(getPool()), specificData(getPool())
+	{ }
+
+	KnownServerKey(Firebird::MemoryPool& p, const KnownServerKey& v)
+		: Firebird::AutoStorage(p), type(getPool(), v.type), plugins(getPool(), v.plugins),
+		  specificData(getPool(), v.specificData)
+	{ }
+
+	void addSpecificData(const Firebird::PathName& plugin, unsigned len, const void* data)
+	{
+		PluginSpecific& p = specificData.add();
+		p.first = plugin;
+		memcpy(p.second.getBuffer(len), data, len);
+	}
+
+	const Firebird::UCharBuffer* findSpecificData(const Firebird::PathName& plugin) const
+	{
+		for (unsigned i = 0; i < specificData.getCount(); ++i)
+		{
+			//KnownServerKey::PluginSpecific& p = specificData[i];
+			auto& p = specificData[i];
+			if (p.first == plugin)
+				return &p.second;
+		}
+		return nullptr;
+	}
+
+private:
+	KnownServerKey(const KnownServerKey&);
+	KnownServerKey& operator=(const KnownServerKey&);
+};
+
+// Tags for clumplets, passed from server to client
+const UCHAR TAG_KEY_TYPE		= 0;
+const UCHAR TAG_KEY_PLUGINS		= 1;
+const UCHAR TAG_KNOWN_PLUGINS	= 2;
+const UCHAR TAG_PLUGIN_SPECIFIC	= 3;
 
 
 typedef Firebird::GetPlugins<Firebird::IClient> AuthClientPlugins;
@@ -759,11 +812,13 @@ public:
 	FB_BOOLEAN first(Firebird::CheckStatusWrapper* status);
 
 private:
+	Firebird::AuthReader::AuthBlock buffer;
 	Firebird::AuthReader rdr;
 	Firebird::AuthReader::Info info;
 
 	FB_BOOLEAN loadInfo();
 };
+
 
 class ClntAuthBlock FB_FINAL :
 	public Firebird::RefCntIface<Firebird::IClientBlockImpl<ClntAuthBlock, Firebird::CheckStatusWrapper> >
@@ -782,6 +837,26 @@ private:
 	Firebird::AutoPtr<RmtAuthBlock> remAuthBlock;	//Authentication block if present
 	unsigned nextKey;							// First key to be analyzed
 
+	class ClientCrypt FB_FINAL :
+		public Firebird::VersionedIface<Firebird::ICryptKeyCallbackImpl<ClientCrypt, Firebird::CheckStatusWrapper> >
+	{
+	public:
+		ClientCrypt()
+			: pluginItr(Firebird::IPluginManager::TYPE_KEY_HOLDER, "NoDefault"), currentIface(nullptr)
+		{ }
+
+		Firebird::ICryptKeyCallback* create(const Config* conf);
+
+		// Firebird::IClientBlock implementation
+		unsigned callback(unsigned dataLength, const void* data, unsigned bufferLength, void* buffer);
+
+	private:
+		Firebird::GetPlugins<Firebird::IKeyHolderPlugin> pluginItr;
+		Firebird::ICryptKeyCallback* currentIface;
+	};
+	ClientCrypt clientCrypt;
+	Firebird::ICryptKeyCallback** createdInterface;
+
 public:
 	AuthClientPlugins plugins;
 	bool authComplete;						// Set as response from client that authentication accepted
@@ -793,6 +868,9 @@ public:
 	~ClntAuthBlock()
 	{
 		releaseKeys(0);
+
+		if (createdInterface)
+			*createdInterface = nullptr;
 	}
 
 	void storeDataForPlugin(unsigned int length, const unsigned char* data);
@@ -802,12 +880,13 @@ public:
 	void extractDataFromPluginTo(P_AUTH_CONT* to);
 	void loadClnt(Firebird::ClumpletWriter& dpb, const ParametersSet*);
 	void extractDataFromPluginTo(Firebird::ClumpletWriter& user_id);
-	void resetClnt(const Firebird::PathName* fileName, const CSTRING* listStr = NULL);
+	void resetClnt(const CSTRING* listStr = NULL);
 	bool checkPluginName(Firebird::PathName& nameToCheck);
 	Firebird::PathName getPluginName();
 	void tryNewKeys(rem_port*);
 	void releaseKeys(unsigned from);
 	Firebird::RefPtr<const Config>* getConfig();
+	void createCryptCallback(Firebird::ICryptKeyCallback** callback);
 
 	// Firebird::IClientBlock implementation
 	int release();
@@ -887,34 +966,6 @@ public:
 	Firebird::ICryptKey* newKey(Firebird::CheckStatusWrapper* status);
 };
 
-
-// Type of known by server key, received from it by client
-class KnownServerKey : public Firebird::AutoStorage
-{
-public:
-	Firebird::PathName type, plugins;
-
-	KnownServerKey()
-		: Firebird::AutoStorage(), type(getPool()), plugins(getPool())
-	{ }
-
-	explicit KnownServerKey(Firebird::MemoryPool& p)
-		: Firebird::AutoStorage(p), type(getPool()), plugins(getPool())
-	{ }
-
-	KnownServerKey(Firebird::MemoryPool& p, const KnownServerKey& v)
-		: Firebird::AutoStorage(p), type(getPool(), v.type), plugins(getPool(), v.plugins)
-	{ }
-
-private:
-	KnownServerKey(const KnownServerKey&);
-	KnownServerKey& operator=(const KnownServerKey&);
-};
-
-// Tags for clumplets, passed from server to client
-const UCHAR TAG_KEY_TYPE		= 0;
-const UCHAR TAG_KEY_PLUGINS		= 1;
-const UCHAR TAG_KNOWN_PLUGINS	= 2;
 
 const signed char WIRECRYPT_BROKEN		= -1;
 const signed char WIRECRYPT_DISABLED	= 0;
@@ -1013,6 +1064,7 @@ struct rem_port : public Firebird::GlobalStorage, public Firebird::RefCounted
 	rem_str*		port_version;
 	rem_str*		port_host;				// Our name
 	rem_str*		port_connection;		// Name of connection
+	P_ARCH			port_client_arch;
 	Firebird::string port_login;
 	Firebird::string port_user_name;
 	Firebird::string port_peer_name;
@@ -1041,6 +1093,7 @@ struct rem_port : public Firebird::GlobalStorage, public Firebird::RefCounted
 	Firebird::IWireCryptPlugin* port_crypt_plugin;		// plugin used by port, when not NULL - crypts wire data
 	Firebird::ICryptKeyCallback* port_client_crypt_callback;	// client callback to transfer database crypt key
 	ServerCallbackBase* port_server_crypt_callback;			// server callback to transfer database crypt key
+	Firebird::PathName port_crypt_name;		// name of actual wire crypt plugin
 
 	Firebird::RefPtr<Firebird::IReplicator> port_replicator;
 
@@ -1077,7 +1130,7 @@ public:
 		port_packet_vector(0),
 #endif
 		port_objects(getPool()), port_version(0), port_host(0),
-		port_connection(0), port_login(getPool()),
+		port_connection(0), port_client_arch(arch_generic), port_login(getPool()),
 		port_user_name(getPool()), port_peer_name(getPool()),
 		port_protocol_id(getPool()), port_address(getPool()),
 		port_rpr(0), port_statement(0), port_receive_rmtque(0),
@@ -1086,8 +1139,8 @@ public:
 		port_srv_auth(NULL), port_srv_auth_block(NULL),
 		port_crypt_keys(getPool()), port_crypt_complete(false), port_crypt_level(WIRECRYPT_REQUIRED),
 		port_known_server_keys(getPool()), port_crypt_plugin(NULL),
-		port_client_crypt_callback(NULL), port_server_crypt_callback(NULL), port_replicator(NULL),
-		port_buffer(FB_NEW_POOL(getPool()) UCHAR[rpt]),
+		port_client_crypt_callback(NULL), port_server_crypt_callback(NULL), port_crypt_name(getPool()),
+		port_replicator(NULL), port_buffer(FB_NEW_POOL(getPool()) UCHAR[rpt]),
 		port_snd_packets(0), port_rcv_packets(0), port_snd_bytes(0), port_rcv_bytes(0)
 	{
 		addRef();
@@ -1292,8 +1345,14 @@ public:
 
 	Firebird::string getRemoteId() const;
 	void auxAcceptError(PACKET* packet);
+
+	// Working with 'key/plugin' pairs and associated plugin specific data
 	void addServerKeys(CSTRING* str);
+	void addSpecificData(const Firebird::PathName& type, const Firebird::PathName& plugin,
+		unsigned length, const void* data);
+	const Firebird::UCharBuffer* findSpecificData(const Firebird::PathName& type, const Firebird::PathName& plugin);
 	bool tryNewKey(InternalCryptKey* cryptKey);
+
 	void checkResponse(Firebird::IStatus* warning, PACKET* packet, bool checkKeys = false);
 
 private:

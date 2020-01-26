@@ -21,12 +21,12 @@
  */
 
 #include "firebird.h"
-#include "consts_pub.h"
+#include "firebird/impl/consts_pub.h"
 #include "iberror.h"
 #include "../yvalve/PluginManager.h"
 #include "../yvalve/MasterImplementation.h"
 
-#include "../dsql/sqlda_pub.h"
+#include "firebird/impl/sqlda_pub.h"
 #include "../yvalve/why_proto.h"
 
 #include "../common/os/path_utils.h"
@@ -963,7 +963,8 @@ namespace
 		RefPtr<PluginModule> rc(FB_NEW PluginModule(module, info.curModule));
 		typedef void PluginEntrypoint(IMaster* masterInterface);
 		PluginEntrypoint* startModule;
-		if (module->findSymbol(STRINGIZE(FB_PLUGIN_ENTRY_POINT), startModule))
+		ISC_STATUS_ARRAY stArray;
+		if (module->findSymbol(stArray, STRINGIZE(FB_PLUGIN_ENTRY_POINT), startModule))
 		{
 			current = rc;
 			startModule(masterInterface);
@@ -971,7 +972,7 @@ namespace
 			return rc;
 		}
 
-		loadError(Arg::Gds(isc_pman_entrypoint_notfound) << fixedModuleName);
+		loadError(Arg::Gds(isc_pman_entrypoint_notfound) << fixedModuleName << Arg::StatusVector(stArray));
 		return RefPtr<PluginModule>(NULL);	// compiler warning silencer
 	}
 
