@@ -1938,6 +1938,8 @@ C --
       PARAMETER (GDS__cannot_update_old_blob           = 335545262)
       INTEGER*4 GDS__cannot_read_new_blob            
       PARAMETER (GDS__cannot_read_new_blob             = 335545263)
+      INTEGER*4 GDS__dyn_no_create_priv              
+      PARAMETER (GDS__dyn_no_create_priv               = 335545264)
       INTEGER*4 GDS__gfix_db_name                    
       PARAMETER (GDS__gfix_db_name                     = 335740929)
       INTEGER*4 GDS__gfix_invalid_sw                 

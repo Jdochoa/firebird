@@ -2174,7 +2174,7 @@ DmlNode* DeclareVariableNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerS
 		csb->csb_map_item_info.put(Item(Item::TYPE_VARIABLE, node->varId), itemInfo);
 	}
 
-	if (itemInfo.explicitCollation)
+	if ((csb->csb_g_flags & csb_get_dependencies) && itemInfo.explicitCollation)
 	{
 		CompilerScratch::Dependency dependency(obj_collation);
 		dependency.number = INTL_TEXT_TYPE(node->varDesc);
@@ -2715,9 +2715,13 @@ DmlNode* ErrorHandlerNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScra
 				if (!MET_load_exception(tdbb, item))
 					PAR_error(csb, Arg::Gds(isc_xcpnotdef) << item.name);
 
-				CompilerScratch::Dependency dependency(obj_exception);
-				dependency.number = item.code;
-				csb->csb_dependencies.push(dependency);
+				if (csb->csb_g_flags & csb_get_dependencies)
+				{
+					CompilerScratch::Dependency dependency(obj_exception);
+					dependency.number = item.code;
+					csb->csb_dependencies.push(dependency);
+				}
+
 				break;
 			}
 
@@ -2886,7 +2890,7 @@ DmlNode* ExecProcedureNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScr
 	PAR_procedure_parms(tdbb, csb, procedure, node->outputMessage.getAddress(),
 		node->outputSources.getAddress(), node->outputTargets.getAddress(), false);
 
-	if (!procedure->isSubRoutine())
+	if ((csb->csb_g_flags & csb_get_dependencies) && !procedure->isSubRoutine())
 	{
 		CompilerScratch::Dependency dependency(obj_procedure);
 		dependency.procedure = procedure;
@@ -4500,9 +4504,12 @@ DmlNode* ExceptionNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch
 					if (!MET_load_exception(tdbb, *item))
 						PAR_error(csb, Arg::Gds(isc_xcpnotdef) << item->name);
 
-					CompilerScratch::Dependency dependency(obj_exception);
-					dependency.number = item->code;
-					csb->csb_dependencies.push(dependency);
+					if (csb->csb_g_flags & csb_get_dependencies)
+					{
+						CompilerScratch::Dependency dependency(obj_exception);
+						dependency.number = item->code;
+						csb->csb_dependencies.push(dependency);
+					}
 				}
 				break;
 

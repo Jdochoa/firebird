@@ -485,11 +485,10 @@ const ULONG TDBB_use_db_page_space		= 128;		// use database (not temporary) page
 const ULONG TDBB_detaching				= 256;		// detach is in progress
 const ULONG TDBB_wait_cancel_disable	= 512;		// don't cancel current waiting operation
 const ULONG TDBB_cache_unwound			= 1024;		// page cache was unwound
-const ULONG TDBB_trusted_ddl			= 2048;		// skip DDL permission checks. Set after DDL permission check and clear after DDL execution
-const ULONG TDBB_reset_stack			= 4096;		// stack should be reset after stack overflow exception
-const ULONG TDBB_dfw_cleanup			= 8192;		// DFW cleanup phase is active
-const ULONG TDBB_repl_sql				= 16384;	// SQL statement is being replicated
-const ULONG TDBB_replicator				= 32768;	// Replicator
+const ULONG TDBB_reset_stack			= 2048;		// stack should be reset after stack overflow exception
+const ULONG TDBB_dfw_cleanup			= 4096;		// DFW cleanup phase is active
+const ULONG TDBB_repl_sql				= 8192;	// SQL statement is being replicated
+const ULONG TDBB_replicator				= 16384;	// Replicator
 
 class thread_db : public Firebird::ThreadData
 {

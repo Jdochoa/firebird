@@ -4903,12 +4903,15 @@ bool get_function(BurpGlobals* tdgbl)
 
 	bool existFlag = false;
 
+	Firebird::ITransaction* local_trans = tdgbl->global_trans ? tdgbl->global_trans : gds_trans;
+
 	if (tdgbl->runtimeODS >= DB_VERSION_DDL12)
 	{
 		GDS_NAME function_name;
 		bool securityClass = false;
 
-		STORE (REQUEST_HANDLE tdgbl->handles_get_function_req_handle1)
+		STORE (TRANSACTION_HANDLE local_trans
+				REQUEST_HANDLE tdgbl->handles_get_function_req_handle1)
 			X IN RDB$FUNCTIONS
 			X.RDB$DESCRIPTION.NULL = TRUE;
 			X.RDB$ENGINE_NAME.NULL = TRUE;
@@ -4959,12 +4962,12 @@ bool get_function(BurpGlobals* tdgbl)
 
 				case att_function_description:
 					X.RDB$DESCRIPTION.NULL = FALSE;
-					get_misc_blob (tdgbl, X.RDB$DESCRIPTION, false);
+					get_misc_blob (tdgbl, X.RDB$DESCRIPTION, true);
 					break;
 
 				case att_function_description2:
 					X.RDB$DESCRIPTION.NULL = FALSE;
-					get_source_blob (tdgbl, X.RDB$DESCRIPTION, false);
+					get_source_blob (tdgbl, X.RDB$DESCRIPTION, true);
 					break;
 
 				case att_function_module_name:
@@ -5024,7 +5027,7 @@ bool get_function(BurpGlobals* tdgbl)
 				case att_function_blr:
 					if (tdgbl->RESTORE_format >= 10)
 					{
-						get_blr_blob(tdgbl, X.RDB$FUNCTION_BLR, false);
+						get_blr_blob(tdgbl, X.RDB$FUNCTION_BLR, true);
 						X.RDB$FUNCTION_BLR.NULL = FALSE;
 					}
 					else
@@ -5034,7 +5037,7 @@ bool get_function(BurpGlobals* tdgbl)
 				case att_function_source:
 					if (tdgbl->RESTORE_format >= 10)
 					{
-						get_source_blob(tdgbl, X.RDB$FUNCTION_SOURCE, false);
+						get_source_blob(tdgbl, X.RDB$FUNCTION_SOURCE, true);
 						X.RDB$FUNCTION_SOURCE.NULL = FALSE;
 					}
 					else
@@ -5054,7 +5057,7 @@ bool get_function(BurpGlobals* tdgbl)
 				case att_function_debug_info:
 					if (tdgbl->RESTORE_format >= 10)
 					{
-						get_misc_blob(tdgbl, X.RDB$DEBUG_INFO, false);
+						get_misc_blob(tdgbl, X.RDB$DEBUG_INFO, true);
 						X.RDB$DEBUG_INFO.NULL = FALSE;
 					}
 					else
@@ -5133,7 +5136,8 @@ bool get_function(BurpGlobals* tdgbl)
 	}
 	else
 	{
-		STORE (REQUEST_HANDLE tdgbl->handles_get_function_req_handle1)
+		STORE (TRANSACTION_HANDLE local_trans
+				REQUEST_HANDLE tdgbl->handles_get_function_req_handle1)
 			X IN RDB$FUNCTIONS
 			X.RDB$SYSTEM_FLAG = 0;
 			X.RDB$SYSTEM_FLAG.NULL = FALSE;
@@ -5279,6 +5283,8 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 	att_type	attribute;
 	scan_attr_t		scan_next_attr;
 
+	Firebird::ITransaction* local_trans = tdgbl->global_trans ? tdgbl->global_trans : gds_trans;
+
 	if (skip_arguments)
 	{
 		skip_init(&scan_next_attr);
@@ -5378,7 +5384,8 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 	if (tdgbl->runtimeODS >= DB_VERSION_DDL12)
 	{
 		// with RDB$FIELD_PRECISION
-		STORE (REQUEST_HANDLE tdgbl->handles_get_function_arg_req_handle1)
+		STORE (TRANSACTION_HANDLE local_trans
+				REQUEST_HANDLE tdgbl->handles_get_function_arg_req_handle1)
 			X IN RDB$FUNCTION_ARGUMENTS
 			X.RDB$FIELD_SUB_TYPE.NULL = TRUE;
 			X.RDB$CHARACTER_SET_ID.NULL = TRUE;
@@ -5496,7 +5503,7 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 				case att_functionarg_default_value:
 					if (tdgbl->RESTORE_format >= 10)
 					{
-						get_blr_blob(tdgbl, X.RDB$DEFAULT_VALUE, false);
+						get_blr_blob(tdgbl, X.RDB$DEFAULT_VALUE, true);
 						X.RDB$DEFAULT_VALUE.NULL = FALSE;
 					}
 					else
@@ -5587,7 +5594,8 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 	else if (tdgbl->runtimeODS >= DB_VERSION_DDL10)
 	{
 		// with RDB$FIELD_PRECISION
-		STORE (REQUEST_HANDLE tdgbl->handles_get_function_arg_req_handle1)
+		STORE (TRANSACTION_HANDLE local_trans
+				REQUEST_HANDLE tdgbl->handles_get_function_arg_req_handle1)
 			X IN RDB$FUNCTION_ARGUMENTS
 			X.RDB$FIELD_SUB_TYPE.NULL = TRUE;
 			X.RDB$CHARACTER_SET_ID.NULL = TRUE;
@@ -5700,7 +5708,8 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 	else
 	{
 		// without RDB$FIELD_PRECISION
-		STORE (REQUEST_HANDLE tdgbl->handles_get_function_arg_req_handle1)
+		STORE (TRANSACTION_HANDLE local_trans
+				REQUEST_HANDLE tdgbl->handles_get_function_arg_req_handle1)
 			X IN RDB$FUNCTION_ARGUMENTS
 			X.RDB$FIELD_SUB_TYPE.NULL = TRUE;
 			X.RDB$CHARACTER_SET_ID.NULL = TRUE;

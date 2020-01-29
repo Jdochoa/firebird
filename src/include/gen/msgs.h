@@ -968,6 +968,7 @@ Data source : @4"},		/* eds_statement */
 	{335545261, "Can not convert @1 to @2"},		/* bind_convert */
 	{335545262, "cannot update old BLOB"},		/* cannot_update_old_blob */
 	{335545263, "cannot read from new BLOB"},		/* cannot_read_new_blob */
+	{335545264, "No permission for CREATE @1 operation"},		/* dyn_no_create_priv */
 	{335740929, "data base file name (@1) already given"},		/* gfix_db_name */
 	{335740930, "invalid switch @1"},		/* gfix_invalid_sw */
 	{335740932, "incompatible switch combination"},		/* gfix_incmp_sw */

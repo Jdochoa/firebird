@@ -3314,7 +3314,7 @@ DmlNode* CastNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* csb
 	if (itemInfo.isSpecial())
 		node->itemInfo = FB_NEW_POOL(*tdbb->getDefaultPool()) ItemInfo(*tdbb->getDefaultPool(), itemInfo);
 
-	if (itemInfo.explicitCollation)
+	if ((csb->csb_g_flags & csb_get_dependencies) && itemInfo.explicitCollation)
 	{
 		CompilerScratch::Dependency dependency(obj_collation);
 		dependency.number = INTL_TEXT_TYPE(node->castDesc);
@@ -4805,10 +4805,13 @@ DmlNode* DefaultNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 	csb->csb_blr_reader.getMetaName(relationName);
 	csb->csb_blr_reader.getMetaName(fieldName);
 
-	CompilerScratch::Dependency dependency(obj_relation);
-	dependency.relation = MET_lookup_relation(tdbb, relationName);
-	dependency.subName = FB_NEW_POOL(pool) MetaName(fieldName);
-	csb->csb_dependencies.push(dependency);
+	if (csb->csb_g_flags & csb_get_dependencies)
+	{
+		CompilerScratch::Dependency dependency(obj_relation);
+		dependency.relation = MET_lookup_relation(tdbb, relationName);
+		dependency.subName = FB_NEW_POOL(pool) MetaName(fieldName);
+		csb->csb_dependencies.push(dependency);
+	}
 
 	jrd_fld* fld = NULL;
 

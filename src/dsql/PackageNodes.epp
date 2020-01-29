@@ -279,7 +279,7 @@ DdlNode* CreateAlterPackageNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 }
 
 
-bool CreateAlterPackageNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterPackageNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
@@ -287,11 +287,10 @@ bool CreateAlterPackageNode::checkPermission(thread_db* tdbb, jrd_tra* transacti
 	if (alter)
 	{
 		if (SCL_check_package(tdbb, &dscName, SCL_alter) || !create)
-			return true;
+			return;
 	}
 
 	SCL_check_create_access(tdbb, SCL_object_package);
-	return true;
 }
 
 
@@ -404,7 +403,7 @@ bool CreateAlterPackageNode::executeAlter(thread_db* tdbb, DsqlCompilerScratch* 
 				DropFunctionNode dropNode(pool, i->name);
 				dropNode.package = name;
 				dropNode.dsqlPass(dsqlScratch);
-				dropNode.executeDdl(tdbb, dsqlScratch, transaction);
+				dropNode.executeDdl(tdbb, dsqlScratch, transaction, true);
 			}
 		}
 
@@ -416,7 +415,7 @@ bool CreateAlterPackageNode::executeAlter(thread_db* tdbb, DsqlCompilerScratch* 
 				DropProcedureNode dropNode(pool, i->name);
 				dropNode.package = name;
 				dropNode.dsqlPass(dsqlScratch);
-				dropNode.executeDdl(tdbb, dsqlScratch, transaction);
+				dropNode.executeDdl(tdbb, dsqlScratch, transaction, true);
 			}
 		}
 
@@ -465,12 +464,12 @@ void CreateAlterPackageNode::executeItems(thread_db* tdbb, DsqlCompilerScratch* 
 		{
 			case Item::FUNCTION:
 				(*items)[i].function->packageOwner = owner;
-				(*items)[i].function->executeDdl(tdbb, (*items)[i].dsqlScratch, transaction);
+				(*items)[i].function->executeDdl(tdbb, (*items)[i].dsqlScratch, transaction, true);
 				break;
 
 			case Item::PROCEDURE:
 				(*items)[i].procedure->packageOwner = owner;
-				(*items)[i].procedure->executeDdl(tdbb, (*items)[i].dsqlScratch, transaction);
+				(*items)[i].procedure->executeDdl(tdbb, (*items)[i].dsqlScratch, transaction, true);
 				break;
 		}
 	}
@@ -491,12 +490,11 @@ string DropPackageNode::internalPrint(NodePrinter& printer) const
 }
 
 
-bool DropPackageNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropPackageNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	SCL_check_package(tdbb, &dscName, SCL_drop);
-	return true;
 }
 
 
@@ -549,7 +547,7 @@ void DropPackageNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
 		DropFunctionNode dropNode(pool, i->name);
 		dropNode.package = name;
 		dropNode.dsqlPass(dsqlScratch);
-		dropNode.executeDdl(tdbb, dsqlScratch, transaction);
+		dropNode.executeDdl(tdbb, dsqlScratch, transaction, true);
 	}
 
 	for (SortedObjectsArray<Signature>::iterator i = existingProcs.begin();
@@ -558,7 +556,7 @@ void DropPackageNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
 		DropProcedureNode dropNode(pool, i->name);
 		dropNode.package = name;
 		dropNode.dsqlPass(dsqlScratch);
-		dropNode.executeDdl(tdbb, dsqlScratch, transaction);
+		dropNode.executeDdl(tdbb, dsqlScratch, transaction, true);
 	}
 
 	requestHandle.reset(tdbb, drq_e_pkg_prv, DYN_REQUESTS);
@@ -687,10 +685,9 @@ DdlNode* CreatePackageBodyNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 }
 
 
-bool CreatePackageBodyNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreatePackageBodyNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_create_access(tdbb, SCL_object_package);
-	return true;
 }
 
 
@@ -787,7 +784,7 @@ void CreatePackageBodyNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlSc
 					func->packageOwner = owner;
 					func->preserveDefaults =
 						existingFuncs.exist(Signature(func->name)) && arrays[i] == items;
-					func->executeDdl(tdbb, elem.dsqlScratch, transaction);
+					func->executeDdl(tdbb, elem.dsqlScratch, transaction, true);
 					break;
 				}
 
@@ -808,7 +805,7 @@ void CreatePackageBodyNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlSc
 					proc->packageOwner = owner;
 					proc->preserveDefaults =
 						existingProcs.exist(Signature(proc->name)) && arrays[i] == items;
-					proc->executeDdl(tdbb, elem.dsqlScratch, transaction);
+					proc->executeDdl(tdbb, elem.dsqlScratch, transaction, true);
 					break;
 				}
 			}
@@ -876,12 +873,11 @@ string DropPackageBodyNode::internalPrint(NodePrinter& printer) const
 }
 
 
-bool DropPackageBodyNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropPackageBodyNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	SCL_check_package(tdbb, &dscName, SCL_drop);
-	return true;
 }
 
 
@@ -935,7 +931,7 @@ void DropPackageBodyNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScra
 			DropFunctionNode dropNode(pool, FUN.RDB$FUNCTION_NAME);
 			dropNode.package = name;
 			dropNode.dsqlPass(dsqlScratch);
-			dropNode.executeDdl(tdbb, dsqlScratch, transaction);
+			dropNode.executeDdl(tdbb, dsqlScratch, transaction, true);
 		}
 		else
 		{
@@ -962,7 +958,7 @@ void DropPackageBodyNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScra
 			DropProcedureNode dropNode(pool, PRC.RDB$PROCEDURE_NAME);
 			dropNode.package = name;
 			dropNode.dsqlPass(dsqlScratch);
-			dropNode.executeDdl(tdbb, dsqlScratch, transaction);
+			dropNode.executeDdl(tdbb, dsqlScratch, transaction, true);
 		}
 		else
 		{

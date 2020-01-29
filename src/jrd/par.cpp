@@ -506,9 +506,12 @@ USHORT PAR_desc(thread_db* tdbb, CompilerScratch* csb, dsc* desc, ItemInfo* item
 				}
 			}
 
-			CompilerScratch::Dependency dependency(obj_field);
-			dependency.name = name;
-			csb->csb_dependencies.push(dependency);
+			if (csb->csb_g_flags & csb_get_dependencies)
+			{
+				CompilerScratch::Dependency dependency(obj_field);
+				dependency.name = name;
+				csb->csb_dependencies.push(dependency);
+			}
 
 			break;
 		}
@@ -568,10 +571,13 @@ USHORT PAR_desc(thread_db* tdbb, CompilerScratch* csb, dsc* desc, ItemInfo* item
 				}
 			}
 
-			CompilerScratch::Dependency dependency(obj_relation);
-			dependency.relation = MET_lookup_relation(tdbb, *relationName);
-			dependency.subName = fieldName;
-			csb->csb_dependencies.push(dependency);
+			if (csb->csb_g_flags & csb_get_dependencies)
+			{
+				CompilerScratch::Dependency dependency(obj_relation);
+				dependency.relation = MET_lookup_relation(tdbb, *relationName);
+				dependency.subName = fieldName;
+				csb->csb_dependencies.push(dependency);
+			}
 
 			break;
 		}
@@ -582,7 +588,7 @@ USHORT PAR_desc(thread_db* tdbb, CompilerScratch* csb, dsc* desc, ItemInfo* item
 			break;
 	}
 
-	if (desc->getTextType() != CS_NONE)
+	if ((csb->csb_g_flags & csb_get_dependencies) && desc->getTextType() != CS_NONE)
 	{
 		CompilerScratch::Dependency dependency(obj_collation);
 		dependency.number = INTL_TEXT_TYPE(*desc);
@@ -895,6 +901,9 @@ void PAR_dependency(thread_db* tdbb, CompilerScratch* csb, StreamType stream, SS
  *
  **************************************/
 	SET_TDBB(tdbb);
+
+	if (!(csb->csb_g_flags & csb_get_dependencies))
+		return;
 
 	CompilerScratch::Dependency dependency(0);
 

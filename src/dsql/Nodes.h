@@ -190,20 +190,18 @@ public:
 	// Check permission on DDL operation. Return true if everything is OK.
 	// Raise an exception for bad permission.
 	// If returns false permissions will be check in old style at vio level as well as while direct RDB$ tables modify.
-	virtual bool checkPermission(thread_db* tdbb, jrd_tra* transaction) = 0;
+	virtual void checkPermission(thread_db* tdbb, jrd_tra* transaction) = 0;
 
 	// Set the scratch's transaction when executing a node. Fact of accessing the scratch during
 	// execution is a hack.
-	void executeDdl(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
+	void executeDdl(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction, bool trusted = false)
 	{
 		// dsqlScratch should be NULL with CREATE DATABASE.
 		if (dsqlScratch)
 			dsqlScratch->setTransaction(transaction);
 
-		const ULONG flag = checkPermission(tdbb, transaction) ? TDBB_trusted_ddl : 0;
-
-		Firebird::AutoSetRestoreFlag<ULONG> trustedDdlFlag(&tdbb->tdbb_flags, flag, true);
-
+		if (!trusted)
+			checkPermission(tdbb, transaction);
 		execute(tdbb, dsqlScratch, transaction);
 	}
 

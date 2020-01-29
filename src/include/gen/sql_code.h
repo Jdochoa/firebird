@@ -964,6 +964,7 @@ static const struct {
 	{335545261, -901}, /* 941 bind_convert */
 	{335545262, -402}, /* 942 cannot_update_old_blob */
 	{335545263, -402}, /* 943 cannot_read_new_blob */
+	{335545264, -901}, /* 944 dyn_no_create_priv */
 	{335740929, -901}, /*   1 gfix_db_name */
 	{335740930, -901}, /*   2 gfix_invalid_sw */
 	{335740932, -901}, /*   4 gfix_incmp_sw */

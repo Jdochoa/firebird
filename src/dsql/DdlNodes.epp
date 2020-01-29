@@ -1109,10 +1109,9 @@ string AlterCharSetNode::internalPrint(NodePrinter& printer) const
 	return "AlterCharSetNode";
 }
 
-bool AlterCharSetNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterCharSetNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_charset(tdbb, charSet, SCL_alter);
-	return true;
 }
 
 void AlterCharSetNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -1173,12 +1172,10 @@ void AlterCharSetNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch
 //----------------------
 
 
-bool AlterEDSPoolSetNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterEDSPoolSetNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	if (!tdbb->getAttachment()->locksmith(tdbb, MODIFY_EXT_CONN_POOL))
 		status_exception::raise(Arg::Gds(isc_miss_prvlg) << "MODIFY_EXT_CONN_POOL");
-
-	return true;
 }
 
 string AlterEDSPoolSetNode::internalPrint(NodePrinter& printer) const
@@ -1213,12 +1210,10 @@ void AlterEDSPoolSetNode::execute(thread_db* tdbb, DsqlCompilerScratch* /*dsqlSc
 //----------------------
 
 
-bool AlterEDSPoolClearNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterEDSPoolClearNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	if (!tdbb->getAttachment()->locksmith(tdbb, MODIFY_EXT_CONN_POOL))
 		status_exception::raise(Arg::Gds(isc_miss_prvlg) << "MODIFY_EXT_CONN_POOL");
-
-	return true;
 }
 
 string AlterEDSPoolClearNode::internalPrint(NodePrinter& printer) const
@@ -1273,7 +1268,7 @@ string CommentOnNode::internalPrint(NodePrinter& printer) const
 	return "CommentOnNode";
 }
 
-bool CommentOnNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CommentOnNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	Attachment* const attachment = transaction->tra_attachment;
 
@@ -1411,8 +1406,6 @@ bool CommentOnNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 		default:
 			fb_assert(false);
 	}
-
-	return true;
 }
 
 // select rdb$relation_name from rdb$relation_fields where rdb$field_name = 'RDB$DESCRIPTION';
@@ -1711,18 +1704,17 @@ DdlNode* CreateAlterFunctionNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool CreateAlterFunctionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterFunctionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	if (alter)
 	{
 		if (SCL_check_function(tdbb, &dscName, SCL_alter) || !create)
-			return true;
+			return;
 	}
 
 	SCL_check_create_access(tdbb, SCL_object_function);
-	return true;
 }
 
 void CreateAlterFunctionNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -2378,12 +2370,11 @@ string AlterExternalFunctionNode::internalPrint(NodePrinter& printer) const
 	return "AlterExternalFunctionNode";
 }
 
-bool AlterExternalFunctionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterExternalFunctionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	SCL_check_function(tdbb, &dscName, SCL_alter);
-	return true;
 }
 
 // Allow changing the entry point and/or the module name of a UDF.
@@ -2510,12 +2501,11 @@ DdlNode* DropFunctionNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool DropFunctionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropFunctionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	SCL_check_function(tdbb, &dscName, SCL_drop);
-	return true;
 }
 
 void DropFunctionNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -2724,18 +2714,17 @@ DdlNode* CreateAlterProcedureNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool CreateAlterProcedureNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterProcedureNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	if (alter)
 	{
 		if (SCL_check_procedure(tdbb, &dscName, SCL_alter) || !create)
-			return true;
+			return;
 	}
 
 	SCL_check_create_access(tdbb, SCL_object_procedure);
-	return true;
 }
 
 void CreateAlterProcedureNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -3315,12 +3304,11 @@ DdlNode* DropProcedureNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool DropProcedureNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropProcedureNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	SCL_check_procedure(tdbb, &dscName, SCL_drop);
-	return true;
 }
 
 void DropProcedureNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -3599,7 +3587,7 @@ DdlNode* CreateAlterTriggerNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool CreateAlterTriggerNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterTriggerNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	if (!create)
 	{
@@ -3629,8 +3617,6 @@ bool CreateAlterTriggerNode::checkPermission(thread_db* tdbb, jrd_tra* transacti
 	}
 	else
 		SCL_check_database(tdbb, SCL_alter);
-
-	return true;
 }
 
 void CreateAlterTriggerNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -3795,7 +3781,7 @@ DdlNode* DropTriggerNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool DropTriggerNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropTriggerNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	MetaName relationName = getTriggerRelationName(tdbb, transaction, name);
 
@@ -3807,8 +3793,6 @@ bool DropTriggerNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 		dscName.makeText(relationName.length(), CS_METADATA, (UCHAR*) relationName.c_str());
 		SCL_check_relation(tdbb, &dscName, SCL_alter);
 	}
-
-	return true;
 }
 
 void DropTriggerNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -3939,10 +3923,9 @@ string CreateCollationNode::internalPrint(NodePrinter& printer) const
 	return "CreateCollationNode";
 }
 
-bool CreateCollationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateCollationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_create_access(tdbb, SCL_object_collation);
-	return true;
 }
 
 void CreateCollationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -4159,10 +4142,9 @@ string DropCollationNode::internalPrint(NodePrinter& printer) const
 	return "DropCollationNode";
 }
 
-bool DropCollationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropCollationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_collation(tdbb, name, SCL_drop);
-	return true;
 }
 
 void DropCollationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -4319,10 +4301,9 @@ string CreateDomainNode::internalPrint(NodePrinter& printer) const
 	return "CreateDomainNode";
 }
 
-bool CreateDomainNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateDomainNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_create_access(tdbb, SCL_object_domain);
-	return true;
 }
 
 void CreateDomainNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -4973,10 +4954,9 @@ string AlterDomainNode::internalPrint(NodePrinter& printer) const
 	return "AlterDomainNode";
 }
 
-bool AlterDomainNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterDomainNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_domain(tdbb, name, SCL_alter);
-	return true;
 }
 
 void AlterDomainNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -5331,10 +5311,9 @@ string DropDomainNode::internalPrint(NodePrinter& printer) const
 	return "DropDomainNode";
 }
 
-bool DropDomainNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropDomainNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_domain(tdbb, name, SCL_drop);
-	return true;
 }
 
 void DropDomainNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -5464,16 +5443,15 @@ string CreateAlterExceptionNode::internalPrint(NodePrinter& printer) const
 	return "CreateAlterExceptionNode";
 }
 
-bool CreateAlterExceptionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterExceptionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	if (alter)
 	{
 		if (SCL_check_exception(tdbb, name, SCL_alter) || !create)
-			return true;
+			return;
 	}
 
 	SCL_check_create_access(tdbb, SCL_object_exception);
-	return true;
 }
 
 void CreateAlterExceptionNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -5608,10 +5586,9 @@ string DropExceptionNode::internalPrint(NodePrinter& printer) const
 	return "DropExceptionNode";
 }
 
-bool DropExceptionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropExceptionNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_exception(tdbb, name, SCL_drop);
-	return true;
 }
 
 void DropExceptionNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -5683,16 +5660,15 @@ string CreateAlterSequenceNode::internalPrint(NodePrinter& printer) const
 	return "CreateAlterSequenceNode";
 }
 
-bool CreateAlterSequenceNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterSequenceNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	if (alter)
 	{
 		if (SCL_check_generator(tdbb, name, SCL_alter) || !create)
-			return true;
+			return;
 	}
 
 	SCL_check_create_access(tdbb, SCL_object_generator);
-	return true;
 }
 
 void CreateAlterSequenceNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -5959,10 +5935,9 @@ string DropSequenceNode::internalPrint(NodePrinter& printer) const
 	return "DropSequenceNode";
 }
 
-bool DropSequenceNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropSequenceNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_generator(tdbb, name, SCL_drop);
-	return true;
 }
 
 void DropSequenceNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -7402,10 +7377,9 @@ string CreateRelationNode::internalPrint(NodePrinter& printer) const
 	return "CreateRelationNode";
 }
 
-bool CreateRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_create_access(tdbb, SCL_object_table);
-	return true;
 }
 
 void CreateRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -7542,12 +7516,11 @@ string AlterRelationNode::internalPrint(NodePrinter& printer) const
 	return "AlterRelationNode";
 }
 
-bool AlterRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	SCL_check_relation(tdbb, &dscName, SCL_alter);
-	return true;
 }
 
 void AlterRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -8363,7 +8336,7 @@ string DropRelationNode::internalPrint(NodePrinter& printer) const
 	return "DropRelationNode";
 }
 
-bool DropRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
@@ -8371,7 +8344,6 @@ bool DropRelationNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 		SCL_check_view(tdbb, &dscName, SCL_drop);
 	else
 		SCL_check_relation(tdbb, &dscName, SCL_drop);
-	return true;
 }
 
 void DropRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -8617,18 +8589,17 @@ DdlNode* CreateAlterViewNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	return DdlNode::dsqlPass(dsqlScratch);
 }
 
-bool CreateAlterViewNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterViewNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	dscName.makeText(name.length(), CS_METADATA, (UCHAR*) name.c_str());
 	if (alter)
 	{
 		if (SCL_check_view(tdbb, &dscName, SCL_alter) || !create)
-			return true;
+			return;
 	}
 
 	SCL_check_create_access(tdbb, SCL_object_view);
-	return true;
 }
 
 void CreateAlterViewNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -9765,13 +9736,12 @@ string CreateIndexNode::internalPrint(NodePrinter& printer) const
 	return "CreateIndexNode";
 }
 
-bool CreateIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	dsc dscName;
 	const MetaName &relationName = relation->dsqlName;
 	dscName.makeText(relationName.length(), CS_METADATA, (UCHAR*) relationName.c_str());
 	SCL_check_relation(tdbb, &dscName, SCL_alter, false);
-	return true;
 }
 
 // Define an index.
@@ -9836,7 +9806,7 @@ string AlterIndexNode::internalPrint(NodePrinter& printer) const
 	return "AlterIndexNode";
 }
 
-bool AlterIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	bool systemIndex;
 	MetaName relationName = getIndexRelationName(tdbb, transaction, name, systemIndex);
@@ -9845,7 +9815,6 @@ bool AlterIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 	dscName.makeText(relationName.length(), CS_METADATA, (UCHAR*) relationName.c_str());
 
 	SCL_check_relation(tdbb, &dscName, SCL_alter, systemIndex);
-	return true;
 }
 
 void AlterIndexNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -9899,7 +9868,7 @@ string SetStatisticsNode::internalPrint(NodePrinter& printer) const
 	return "SetStatisticsNode";
 }
 
-bool SetStatisticsNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void SetStatisticsNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	bool systemIndex;
 	MetaName relationName = getIndexRelationName(tdbb, transaction, name, systemIndex);
@@ -9908,7 +9877,6 @@ bool SetStatisticsNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 	dscName.makeText(relationName.length(), CS_METADATA, (UCHAR*) relationName.c_str());
 
 	SCL_check_relation(tdbb, &dscName, SCL_alter, false);
-	return true;
 }
 
 void SetStatisticsNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -9981,7 +9949,7 @@ string DropIndexNode::internalPrint(NodePrinter& printer) const
 	return "DropIndexNode";
 }
 
-bool DropIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	bool systemIndex;
 	MetaName relationName = getIndexRelationName(tdbb, transaction, name, systemIndex);
@@ -9990,7 +9958,6 @@ bool DropIndexNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 	dscName.makeText(relationName.length(), CS_METADATA, (UCHAR*) relationName.c_str());
 
 	SCL_check_relation(tdbb, &dscName, SCL_alter, systemIndex);
-	return true;
 }
 
 void DropIndexNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -10051,10 +10018,9 @@ string CreateFilterNode::internalPrint(NodePrinter& printer) const
 	return "CreateFilterNode";
 }
 
-bool CreateFilterNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateFilterNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_create_access(tdbb, SCL_object_filter);
-	return true;
 }
 
 // Define a blob filter.
@@ -10132,10 +10098,9 @@ string DropFilterNode::internalPrint(NodePrinter& printer) const
 	return "DropFilterNode";
 }
 
-bool DropFilterNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropFilterNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_filter(tdbb, name, SCL_drop);
-	return true;
 }
 
 void DropFilterNode::execute(thread_db* tdbb, DsqlCompilerScratch* /*dsqlScratch*/, jrd_tra* transaction)
@@ -10181,10 +10146,9 @@ string CreateShadowNode::internalPrint(NodePrinter& printer) const
 	return "CreateShadowNode";
 }
 
-bool CreateShadowNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateShadowNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_database(tdbb, SCL_alter);
-	return true;
 }
 
 void CreateShadowNode::execute(thread_db* tdbb, DsqlCompilerScratch* /*dsqlScratch*/, jrd_tra* transaction)
@@ -10251,10 +10215,9 @@ string DropShadowNode::internalPrint(NodePrinter& printer) const
 	return "DropShadowNode";
 }
 
-bool DropShadowNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropShadowNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_database(tdbb, SCL_alter);
-	return true;
 }
 
 void DropShadowNode::execute(thread_db* tdbb, DsqlCompilerScratch* /*dsqlScratch*/, jrd_tra* transaction)
@@ -10309,14 +10272,12 @@ string CreateAlterRoleNode::internalPrint(NodePrinter& printer) const
 	return "CreateAlterRoleNode";
 }
 
-bool CreateAlterRoleNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterRoleNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	if (createFlag)
 		SCL_check_create_access(tdbb, SCL_object_role);
 	else
 		SCL_check_role(tdbb, name, SCL_alter);
-
-	return true;
 }
 
 void CreateAlterRoleNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -10493,10 +10454,9 @@ void MappingNode::addItem(string& ddl, const char* text, char quote)
 	ddl += quote;
 }
 
-bool MappingNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void MappingNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	//DDL_TODO
-	return false;
 }
 
 void MappingNode::runInSecurityDb(SecDbContext* secDbContext)
@@ -10860,10 +10820,9 @@ string DropRoleNode::internalPrint(NodePrinter& printer) const
 	return "DropRoleNode";
 }
 
-bool DropRoleNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropRoleNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_role(tdbb, name, SCL_drop);
-	return true;
 }
 
 void DropRoleNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -10993,10 +10952,9 @@ static void setCharField(Auth::CharField& field, const string* value)
 }
 
 
-bool CreateAlterUserNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void CreateAlterUserNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	//DDL_TODO
-	return false;
 }
 
 
@@ -11128,10 +11086,9 @@ string DropUserNode::internalPrint(NodePrinter& printer) const
 	return "DropUserNode";
 }
 
-bool DropUserNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void DropUserNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	//DDL_TODO
-	return false;
 }
 
 void DropUserNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -11185,10 +11142,9 @@ string GrantRevokeNode::internalPrint(NodePrinter& printer) const
 	return "GrantRevokeNode";
 }
 
-bool GrantRevokeNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void GrantRevokeNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	// GRANT OPTION will be checked in grantRevoke method
-	return false;
 }
 
 void GrantRevokeNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction)
@@ -11750,8 +11706,6 @@ void GrantRevokeNode::grantRevoke(thread_db* tdbb, jrd_tra* transaction, const G
 
 	char priv[2];
 	priv[1] = '\0';
-
-	AutoSetRestoreFlag<ULONG> trustedDdlFlag(&tdbb->tdbb_flags, TDBB_trusted_ddl, true);
 
 	if (isGrant)
 	{
@@ -12425,10 +12379,9 @@ string AlterDatabaseNode::internalPrint(NodePrinter& printer) const
 	return "AlterDatabaseNode";
 }
 
-bool AlterDatabaseNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
+void AlterDatabaseNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 {
 	SCL_check_database(tdbb, SCL_alter);
-	return true;
 }
 
 void AlterDatabaseNode::checkClauses(thread_db* tdbb)

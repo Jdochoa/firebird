@@ -950,6 +950,7 @@ set bulk_insert INSERT INTO SYSTEM_ERRORS (SQL_CODE, SQL_CLASS, SQL_SUBCLASS, FA
 (-901, '22', '000', 0, 941, 'bind_convert', NULL, NULL)
 (-402, '42', '000', 0, 942, 'cannot_update_old_blob', NULL, NULL)
 (-402, '42', '000', 0, 943, 'cannot_read_new_blob', NULL, NULL)
+(-901, '42', '000', 0, 944, 'dyn_no_create_priv', NULL, NULL)
 -- GFIX
 (-901, '00', '000', 3, 1, 'gfix_db_name', NULL, NULL)
 (-901, '00', '000', 3, 2, 'gfix_invalid_sw', NULL, NULL)

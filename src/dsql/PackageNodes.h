@@ -84,7 +84,7 @@ public:
 public:
 	virtual DdlNode* dsqlPass(DsqlCompilerScratch* dsqlScratch);
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
-	virtual bool checkPermission(thread_db* tdbb, jrd_tra* transaction);
+	virtual void checkPermission(thread_db* tdbb, jrd_tra* transaction);
 	virtual void execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction);
 
 protected:
@@ -129,7 +129,7 @@ public:
 
 public:
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
-	virtual bool checkPermission(thread_db* tdbb, jrd_tra* transaction);
+	virtual void checkPermission(thread_db* tdbb, jrd_tra* transaction);
 	virtual void execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction);
 
 protected:
@@ -164,7 +164,7 @@ public:
 public:
 	virtual DdlNode* dsqlPass(DsqlCompilerScratch* dsqlScratch);
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
-	virtual bool checkPermission(thread_db* tdbb, jrd_tra* transaction);
+	virtual void checkPermission(thread_db* tdbb, jrd_tra* transaction);
 	virtual void execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction);
 
 protected:
@@ -196,7 +196,7 @@ public:
 
 public:
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
-	virtual bool checkPermission(thread_db* tdbb, jrd_tra* transaction);
+	virtual void checkPermission(thread_db* tdbb, jrd_tra* transaction);
 	virtual void execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction);
 
 protected:

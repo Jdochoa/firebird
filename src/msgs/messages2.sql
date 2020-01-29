@@ -1051,6 +1051,7 @@ Data source : @4', NULL, NULL)
 ('bind_convert', NULL, 'Coercion.cpp', NULL, 0, 941, NULL, 'Can not convert @1 to @2', NULL, NULL);
 ('cannot_update_old_blob', 'BLB_put_segment', 'blb.cpp', NULL, 0, 942, NULL, 'cannot update old BLOB', NULL, NULL);
 ('cannot_read_new_blob', 'BLB_get_segment', 'blb.cpp', NULL, 0, 943, NULL, 'cannot read from new BLOB', NULL, NULL);
+('dyn_no_create_priv', NULL, 'scl.epp', NULL, 0, 944, NULL, 'No permission for CREATE @1 operation', NULL, NULL);
 -- QLI
 (NULL, NULL, NULL, NULL, 1, 0, NULL, 'expected type', NULL, NULL);
 (NULL, NULL, NULL, NULL, 1, 1, NULL, 'bad block type', NULL, NULL);

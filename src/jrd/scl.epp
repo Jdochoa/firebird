@@ -226,14 +226,6 @@ void SCL_check_access(thread_db* tdbb,
  **************************************/
 	SET_TDBB(tdbb);
 
-	// RS: SCL_references must be checked for DDL operation of index creation
-	// and we need to ignore TDBB_trusted_ddl flag in this case.
-	// More general solution is to remove TDBB_trusted_dll flag since its purpose to
-	// allow system table modification due DDL operations. It requires removing SCL_checks
-	// from VIO_{store,erase,motify}. It's quite possible but not so trivial as at first look.
-	if ((tdbb->tdbb_flags & TDBB_trusted_ddl) && (mask != SCL_references))
-		return;
-
 	const MetaName& userName = s_class->sclClassUser.second;
 
 	if (s_class && (s_class->scl_flags & SCL_corrupt))
@@ -295,16 +287,16 @@ void SCL_check_create_access(thread_db* tdbb, int type)
 	Jrd::Attachment* const attachment = tdbb->getAttachment();
 
 	// Allow the locksmith any access to database
-	// TDBB_trusted_ddl flag may be set in CREATE PACKAGE node. I suppose
-	// if user has CREATE PACKAGE privilege we should not require his to have CREATE FUNCTION as well
-	if ((tdbb->tdbb_flags & TDBB_trusted_ddl) ||
-			attachment->locksmith(tdbb, SystemPrivilege::MODIFY_ANY_OBJECT_IN_DATABASE))
+	if (attachment->locksmith(tdbb, SystemPrivilege::MODIFY_ANY_OBJECT_IN_DATABASE))
 		return;
 
 	const SecurityClass::flags_t obj_mask = SCL_get_object_mask(type);
 
 	if (!(obj_mask & SCL_create))
-		ERR_post(Arg::Gds(isc_dyn_no_priv));
+	{
+		const char* name = accTypeNumToStr(type);
+		ERR_post(Arg::Gds(isc_dyn_no_create_priv) << name);
+	}
 }
 
 
@@ -468,7 +460,11 @@ bool SCL_check_exception(thread_db* tdbb, const MetaName& name, SecurityClass::f
 	}
 	END_FOR
 
-	SCL_check_access(tdbb, s_class, 0, name, mask, SCL_object_exception, false, name);
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, 0, name, mask, SCL_object_exception, false, name);
+		return true;
+	}
 	return found;
 }
 
@@ -502,7 +498,11 @@ bool SCL_check_generator(thread_db* tdbb, const MetaName& name, SecurityClass::f
 	}
 	END_FOR
 
-	SCL_check_access(tdbb, s_class, 0, name, mask, SCL_object_generator, false, name);
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, 0, name, mask, SCL_object_generator, false, name);
+		return true;
+	}
 	return found;
 }
 
@@ -662,7 +662,11 @@ bool SCL_check_package(thread_db* tdbb, const dsc* dsc_name, SecurityClass::flag
 	}
 	END_FOR
 
-	SCL_check_access(tdbb, s_class, id_package, name, mask, SCL_object_package, false, name);
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, id_package, name, mask, SCL_object_package, false, name);
+		return true;
+	}
 	return found;
 }
 
@@ -705,7 +709,11 @@ bool SCL_check_procedure(thread_db* tdbb, const dsc* dsc_name, SecurityClass::fl
 	}
 	END_FOR
 
-	SCL_check_access(tdbb, s_class, id_procedure, name, mask, SCL_object_procedure, false, name);
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, id_procedure, name, mask, SCL_object_procedure, false, name);
+		return true;
+	}
 	return found;
 }
 
@@ -748,7 +756,11 @@ bool SCL_check_function(thread_db* tdbb, const dsc* dsc_name, SecurityClass::fla
 	}
 	END_FOR
 
-	SCL_check_access(tdbb, s_class, id_function, name, mask, SCL_object_function, false, name);
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, id_function, name, mask, SCL_object_function, false, name);
+		return true;
+	}
 	return found;
 }
 
@@ -863,14 +875,16 @@ bool SCL_check_view(thread_db* tdbb, const dsc* dsc_name, SecurityClass::flags_t
 		WITH REL.RDB$RELATION_NAME EQ name.c_str()
 	{
 		if (!REL.RDB$SECURITY_CLASS.NULL)
-		{
 			s_class = SCL_get_class(tdbb, REL.RDB$SECURITY_CLASS);
-		}
 		found = true;
 	}
 	END_FOR
 
-	SCL_check_access(tdbb, s_class, 0, NULL, mask, SCL_object_view, false, name);
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, 0, NULL, mask, SCL_object_view, false, name);
+		return true;
+	}
 	return found;
 }
 
@@ -897,9 +911,7 @@ void SCL_check_role(thread_db* tdbb, const Firebird::MetaName& name, SecurityCla
 		WITH R.RDB$ROLE_NAME EQ name.c_str()
 	{
 		if (!R.RDB$SECURITY_CLASS.NULL)
-		{
 			s_class = SCL_get_class(tdbb, R.RDB$SECURITY_CLASS);
-		}
 	}
 	END_FOR
 

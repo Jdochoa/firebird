@@ -99,7 +99,7 @@ static bool check_nullify_source(thread_db*, record_param*, record_param*, int, 
 static void check_owner(thread_db*, jrd_tra*, record_param*, record_param*, USHORT);
 static bool check_user(thread_db*, const dsc*);
 static int check_precommitted(const jrd_tra*, const record_param*);
-static void check_rel_field_class(thread_db*, record_param*, SecurityClass::flags_t, jrd_tra*);
+static void check_rel_field_class(thread_db*, record_param*, jrd_tra*);
 static void delete_record(thread_db*, record_param*, ULONG, MemoryPool*);
 static UCHAR* delete_tail(thread_db*, record_param*, ULONG, UCHAR*, const UCHAR*);
 static void expunge(thread_db*, record_param*, const jrd_tra*, ULONG);
@@ -1557,11 +1557,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 		case rel_relations:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
-			if (EVL_field(0, rpb->rpb_record, f_rel_name, &desc))
-			{
-				SCL_check_relation(tdbb, &desc, SCL_drop);
-			}
-
 			if (EVL_field(0, rpb->rpb_record, f_rel_id, &desc2))
 			{
 				id = MOV_get_long(tdbb, &desc2, 0);
@@ -1569,6 +1564,7 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 				{
 					IBERROR(187);	// msg 187 cannot delete system relations
 				}
+				EVL_field(0, rpb->rpb_record, f_rel_name, &desc);
 				DFW_post_work(transaction, dfw_delete_relation, &desc, id);
 				jrd_rel* rel_drop = MET_lookup_relation_id(tdbb, id, false);
 				if (rel_drop)
@@ -1578,8 +1574,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 		case rel_packages:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
-			if (EVL_field(0, rpb->rpb_record, f_pkg_name, &desc))
-				SCL_check_package(tdbb, &desc, SCL_drop);
 			break;
 
 		case rel_procedures:
@@ -1588,13 +1582,9 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 			id = MOV_get_long(tdbb, &desc2, 0);
 
 			if (EVL_field(0, rpb->rpb_record, f_prc_pkg_name, &desc2))
-			{
 				MOV_get_metaname(tdbb, &desc2, package_name);
-				SCL_check_package(tdbb, &desc2, SCL_drop);
-			}
 
-			if (EVL_field(0, rpb->rpb_record, f_prc_name, &desc) && package_name.isEmpty())
-				SCL_check_procedure(tdbb, &desc, SCL_drop);
+			EVL_field(0, rpb->rpb_record, f_prc_name, &desc);
 
 			DFW_post_work(transaction, dfw_delete_procedure, &desc, id, package_name);
 			MET_lookup_procedure_id(tdbb, id, false, true, 0);
@@ -1602,9 +1592,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 		case rel_charsets:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
-			EVL_field(0, rpb->rpb_record, f_cs_cs_name, &desc);
-			MOV_get_metaname(tdbb, &desc, object_name);
-			SCL_check_charset(tdbb, object_name, SCL_drop);
 			break;
 
 		case rel_collations:
@@ -1616,41 +1603,24 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 			id = INTL_CS_COLL_TO_TTYPE(id, MOV_get_long(tdbb, &desc2, 0));
 
 			EVL_field(0, rpb->rpb_record, f_coll_name, &desc);
-			MOV_get_metaname(tdbb, &desc, object_name);
-			SCL_check_collation(tdbb, object_name, SCL_drop);
 			DFW_post_work(transaction, dfw_delete_collation, &desc, id);
 			break;
 
 		case rel_exceptions:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_xcp_name, &desc);
-			MOV_get_metaname(tdbb, &desc, object_name);
-			SCL_check_exception(tdbb, object_name, SCL_drop);
 			DFW_post_work(transaction, dfw_delete_exception, &desc, 0);
 			break;
 
 		case rel_gens:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_gen_name, &desc);
-			MOV_get_metaname(tdbb, &desc, object_name);
-			SCL_check_generator(tdbb, object_name, SCL_drop);
 			DFW_post_work(transaction, dfw_delete_generator, &desc, 0);
 			break;
 
 		case rel_funs:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_fun_name, &desc);
-
-			if (EVL_field(0, rpb->rpb_record, f_fun_pkg_name, &desc2))
-			{
-				MOV_get_metaname(tdbb, &desc2, package_name);
-				SCL_check_package(tdbb, &desc2, SCL_drop);
-			}
-			else
-			{
-				SCL_check_function(tdbb, &desc, SCL_drop);
-			}
-
 			EVL_field(0, rpb->rpb_record, f_fun_id, &desc2);
 			id = MOV_get_long(tdbb, &desc2, 0);
 
@@ -1661,8 +1631,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		case rel_indices:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_idx_relation, &desc);
-			EVL_field(0, rpb->rpb_record, f_idx_sys_flag, &desc2);
-			SCL_check_relation(tdbb, &desc, SCL_control, MOV_get_long(tdbb, &desc2, 0) == 1);
 			EVL_field(0, rpb->rpb_record, f_idx_id, &desc2);
 			if ( (id = MOV_get_long(tdbb, &desc2, 0)) )
 			{
@@ -1720,7 +1688,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		case rel_rfr:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_rfr_rname, &desc);
-			SCL_check_relation(tdbb, &desc, SCL_control);
 			DFW_post_work(transaction, dfw_update_format, &desc, 0);
 			EVL_field(0, rpb->rpb_record, f_rfr_fname, &desc2);
 			MOV_get_metaname(tdbb, &desc, object_name);
@@ -1734,35 +1701,19 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 		case rel_args:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
-			if (EVL_field(0, rpb->rpb_record, f_arg_pkg_name, &desc2))
-			{
-				MOV_get_metaname(tdbb, &desc2, package_name);
-				SCL_check_package(tdbb, &desc2, SCL_control);
-			}
-			else
-			{
-				EVL_field(0, rpb->rpb_record, f_arg_fun_name, &desc);
-				SCL_check_function(tdbb, &desc, SCL_control);
-			}
-
 			break;
 
 		case rel_prc_prms:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_prm_procedure, &desc);
+			MOV_get_metaname(tdbb, &desc, object_name);
 
 			if (EVL_field(0, rpb->rpb_record, f_prm_pkg_name, &desc2))
 			{
 				MOV_get_metaname(tdbb, &desc2, package_name);
-				SCL_check_package(tdbb, &desc2, SCL_control);
-			}
-			else
-			{
-				SCL_check_procedure(tdbb, &desc, SCL_control);
 			}
 
 			EVL_field(0, rpb->rpb_record, f_prm_name, &desc2);
-			MOV_get_metaname(tdbb, &desc, object_name);
 
 			if ( (procedure = MET_lookup_procedure(tdbb,
 					QualifiedName(object_name, package_name), true)) )
@@ -1780,8 +1731,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		case rel_fields:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_fld_name, &desc);
-			MOV_get_metaname(tdbb, &desc, object_name);
-			SCL_check_domain(tdbb, object_name, SCL_drop);
 			DFW_post_work(transaction, dfw_delete_field, &desc, 0);
 			MET_change_fields(tdbb, transaction, &desc);
 			break;
@@ -1789,7 +1738,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		case rel_files:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			{
-				SCL_check_database(tdbb, SCL_alter);
 				const bool name_defined = EVL_field(0, rpb->rpb_record, f_file_name, &desc);
 				const USHORT file_flags = EVL_field(0, rpb->rpb_record, f_file_flags, &desc2) ?
 					MOV_get_long(tdbb, &desc2, 0) : 0;
@@ -1822,13 +1770,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 		case rel_triggers:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
-			EVL_field(0, rpb->rpb_record, f_trg_rname, &desc);
-
-			// check if this  request go through without checking permissions
-			if (!(request->getStatement()->flags & JrdStatement::FLAG_IGNORE_PERM)) {
-				SCL_check_relation(tdbb, &desc, SCL_control);
-			}
-
 			EVL_field(0, rpb->rpb_record, f_trg_rname, &desc2);
 			DFW_post_work(transaction, dfw_update_format, &desc2, 0);
 			EVL_field(0, rpb->rpb_record, f_trg_name, &desc);
@@ -2907,10 +2848,11 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 			break;
 
 		case rel_relations:
+			EVL_field(0, org_rpb->rpb_record, f_rel_name, &desc1);
 			if (!check_nullify_source(tdbb, org_rpb, new_rpb, f_rel_source))
 				protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, org_rpb->rpb_record, f_rel_name, &desc1);
-			SCL_check_relation(tdbb, &desc1, SCL_alter);
+			else
+				SCL_check_relation(tdbb, &desc1, SCL_alter);
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_rel_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_rel_owner);
 			DFW_post_work(transaction, dfw_update_format, &desc1, 0);
@@ -2919,8 +2861,11 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_packages:
 			if (!check_nullify_source(tdbb, org_rpb, new_rpb, f_pkg_header_source, f_pkg_body_source))
 				protect_system_table_delupd(tdbb, relation, "UPDATE");
-			if (EVL_field(0, org_rpb->rpb_record, f_pkg_name, &desc1))
-				SCL_check_package(tdbb, &desc1, SCL_alter);
+			else
+			{
+				if (EVL_field(0, org_rpb->rpb_record, f_pkg_name, &desc1))
+					SCL_check_package(tdbb, &desc1, SCL_alter);
+			}
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_pkg_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_pkg_owner);
 			break;
@@ -2928,6 +2873,7 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_procedures:
 			if (!check_nullify_source(tdbb, org_rpb, new_rpb, f_prc_source))
 				protect_system_table_delupd(tdbb, relation, "UPDATE");
+
 			EVL_field(0, org_rpb->rpb_record, f_prc_name, &desc1);
 
 			if (EVL_field(0, org_rpb->rpb_record, f_prc_pkg_name, &desc2))
@@ -2936,9 +2882,7 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 				SCL_check_package(tdbb, &desc2, SCL_alter);
 			}
 			else
-			{
 				SCL_check_procedure(tdbb, &desc1, SCL_alter);
-			}
 
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_prc_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_prc_owner);
@@ -2952,18 +2896,18 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 			break;
 
 		case rel_funs:
+			EVL_field(0, org_rpb->rpb_record, f_fun_name, &desc1);
 			if (!check_nullify_source(tdbb, org_rpb, new_rpb, f_fun_source))
 				protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, org_rpb->rpb_record, f_fun_name, &desc1);
-
-			if (EVL_field(0, org_rpb->rpb_record, f_fun_pkg_name, &desc2))
-			{
-				MOV_get_metaname(tdbb, &desc2, package_name);
-				SCL_check_package(tdbb, &desc2, SCL_alter);
-			}
 			else
 			{
-				SCL_check_function(tdbb, &desc1, SCL_alter);
+				if (EVL_field(0, org_rpb->rpb_record, f_fun_pkg_name, &desc2))
+				{
+					MOV_get_metaname(tdbb, &desc2, package_name);
+					SCL_check_package(tdbb, &desc2, SCL_alter);
+				}
+				else
+					SCL_check_function(tdbb, &desc1, SCL_alter);
 			}
 
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_fun_class);
@@ -2979,9 +2923,6 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 
 		case rel_gens:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, org_rpb->rpb_record, f_gen_name, &desc1);
-			MOV_get_metaname(tdbb, &desc1, object_name);
-			SCL_check_generator(tdbb, object_name, SCL_alter);
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_gen_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_gen_owner);
 			break;
@@ -2989,8 +2930,8 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_rfr:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
 			{
-				check_rel_field_class(tdbb, org_rpb, SCL_control, transaction);
-				check_rel_field_class(tdbb, new_rpb, SCL_control, transaction);
+				check_rel_field_class(tdbb, org_rpb, transaction);
+				check_rel_field_class(tdbb, new_rpb, transaction);
 				check_class(tdbb, transaction, org_rpb, new_rpb, f_rfr_class);
 
 				bool rc1 = EVL_field(NULL, org_rpb->rpb_record, f_rfr_null_flag, &desc1);
@@ -3023,8 +2964,6 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_fields:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
 			EVL_field(0, org_rpb->rpb_record, f_fld_name, &desc1);
-			MOV_get_metaname(tdbb, &desc1, object_name);
-			SCL_check_domain(tdbb, object_name, SCL_alter);
 
 			if (dfw_should_know(tdbb, org_rpb, new_rpb, f_fld_desc, true))
 			{
@@ -3072,7 +3011,6 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_indices:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
 			EVL_field(0, new_rpb->rpb_record, f_idx_relation, &desc1);
-			SCL_check_relation(tdbb, &desc1, SCL_control, false);
 
 			if (dfw_should_know(tdbb, org_rpb, new_rpb, f_idx_desc, true))
 			{
@@ -3092,10 +3030,11 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 			break;
 
 		case rel_triggers:
+			EVL_field(0, new_rpb->rpb_record, f_trg_rname, &desc1);
 			if (!check_nullify_source(tdbb, org_rpb, new_rpb, f_trg_source))
 				protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, new_rpb->rpb_record, f_trg_rname, &desc1);
-			SCL_check_relation(tdbb, &desc1, SCL_control);
+			else
+				SCL_check_relation(tdbb, &desc1, SCL_control | SCL_alter);
 
 			if (dfw_should_know(tdbb, org_rpb, new_rpb, f_trg_desc, true))
 			{
@@ -3120,7 +3059,6 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_files:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
 			{
-				SCL_check_database(tdbb, SCL_alter);
 				SSHORT new_rel_flags, old_rel_flags;
 				EVL_field(0, new_rpb->rpb_record, f_file_name, &desc1);
 				if (EVL_field(0, new_rpb->rpb_record, f_file_flags, &desc2) &&
@@ -3137,27 +3075,18 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 
 		case rel_charsets:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, new_rpb->rpb_record, f_cs_cs_name, &desc1);
-			MOV_get_metaname(tdbb, &desc1, object_name);
-			SCL_check_charset(tdbb, object_name, SCL_alter);
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_cs_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_cs_owner);
 			break;
 
 		case rel_collations:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, new_rpb->rpb_record, f_coll_name, &desc1);
-			MOV_get_metaname(tdbb, &desc1, object_name);
-			SCL_check_collation(tdbb, object_name, SCL_alter);
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_coll_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_coll_owner);
 			break;
 
 		case rel_exceptions:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
-			EVL_field(0, new_rpb->rpb_record, f_xcp_name, &desc1);
-			MOV_get_metaname(tdbb, &desc1, object_name);
-			SCL_check_exception(tdbb, object_name, SCL_alter);
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_xcp_class);
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_xcp_owner);
 			break;
@@ -3629,9 +3558,6 @@ void VIO_store(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 		case rel_indices:
 			protect_system_table_insert(tdbb, request, relation);
-			EVL_field(0, rpb->rpb_record, f_idx_relation, &desc);
-			EVL_field(0, rpb->rpb_record, f_idx_sys_flag, &desc2);
-			SCL_check_relation(tdbb, &desc, SCL_control, MOV_get_long(tdbb, &desc2, 0) == 1);
 			EVL_field(0, rpb->rpb_record, f_idx_name, &desc);
 			if (EVL_field(0, rpb->rpb_record, f_idx_exp_blr, &desc2))
 			{
@@ -3647,7 +3573,6 @@ void VIO_store(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		case rel_rfr:
 			protect_system_table_insert(tdbb, request, relation);
 			EVL_field(0, rpb->rpb_record, f_rfr_rname, &desc);
-			SCL_check_relation(tdbb, &desc, SCL_control);
 			DFW_post_work(transaction, dfw_update_format, &desc, 0);
 			set_system_flag(tdbb, rpb->rpb_record, f_rfr_sys_flag);
 			break;
@@ -3714,7 +3639,7 @@ void VIO_store(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 			// check if this  request go through without checking permissions
 			if (!(request->getStatement()->flags & JrdStatement::FLAG_IGNORE_PERM))
-				SCL_check_relation(tdbb, &desc, SCL_control);
+				SCL_check_relation(tdbb, &desc, SCL_control | SCL_alter);
 
 			if (EVL_field(0, rpb->rpb_record, f_trg_rname, &desc2))
 				DFW_post_work(transaction, dfw_update_format, &desc2, 0);
@@ -4158,7 +4083,6 @@ static int check_precommitted(const jrd_tra* transaction, const record_param* rp
 
 static void check_rel_field_class(thread_db* tdbb,
 								  record_param* rpb,
-								  SecurityClass::flags_t flags,
 								  jrd_tra* transaction)
 {
 /*********************************************
@@ -4175,34 +4099,8 @@ static void check_rel_field_class(thread_db* tdbb,
  **************************************/
 	SET_TDBB(tdbb);
 
-	bool okField = true;
 	DSC desc;
-	if (EVL_field(0, rpb->rpb_record, f_rfr_class, &desc))
-	{
-		const Firebird::MetaName class_name(reinterpret_cast<TEXT*>(desc.dsc_address),
-											desc.dsc_length);
-		const SecurityClass* s_class = SCL_get_class(tdbb, class_name.c_str());
-		if (s_class)
-		{
-			// In case when user has no access to the field,
-			// he may have access to relation as whole.
-			try
-			{
-				SCL_check_access(tdbb, s_class, 0, NULL, flags, SCL_object_column, false, "");
-			}
-			catch (const Firebird::Exception&)
-			{
-				fb_utils::init_status(tdbb->tdbb_status_vector);
-				okField = false;
-			}
-		}
-	}
-
 	EVL_field(0, rpb->rpb_record, f_rfr_rname, &desc);
-
-	if (!okField)
-		SCL_check_relation(tdbb, &desc, flags);
-
 	DFW_post_work(transaction, dfw_update_format, &desc, 0);
 }
 
