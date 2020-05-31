@@ -163,52 +163,8 @@ static const bool compatibility[LCK_max][LCK_max] =
 
 namespace Jrd {
 
-GlobalPtr<LockManager::DbLockMgrMap> LockManager::g_lmMap;
-GlobalPtr<Mutex> LockManager::g_mapMutex;
 
-
-LockManager* LockManager::create(const string& id, RefPtr<const Config> conf)
-{
-	MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-	LockManager* lockMgr = NULL;
-	if (!g_lmMap->get(id, lockMgr))
-	{
-		lockMgr = FB_NEW LockManager(id, conf);
-
-		if (g_lmMap->put(id, lockMgr))
-		{
-			fb_assert(false);
-		}
-	}
-
-	fb_assert(lockMgr);
-
-	lockMgr->addRef();
-	return lockMgr;
-}
-
-
-void LockManager::destroy(LockManager* lockMgr)
-{
-	if (lockMgr)
-	{
-		const string id = lockMgr->m_dbId;
-
-		MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-		if (!lockMgr->release())
-		{
-			if (!g_lmMap->remove(id))
-			{
-				fb_assert(false);
-			}
-		}
-	}
-}
-
-
-LockManager::LockManager(const string& id, RefPtr<const Config> conf)
+LockManager::LockManager(const string& id, const Config* conf)
 	: PID(getpid()),
 	  m_bugcheck(false),
 	  m_process(NULL),
@@ -216,7 +172,7 @@ LockManager::LockManager(const string& id, RefPtr<const Config> conf)
 	  m_cleanupSync(getPool(), blocking_action_thread, THREAD_high),
 	  m_sharedMemory(NULL),
 	  m_blockage(false),
-	  m_dbId(getPool(), id),
+	  m_dbId(id),
 	  m_config(conf),
 	  m_acquireSpins(m_config->getLockAcquireSpins()),
 	  m_memorySize(m_config->getLockMemSize()),
@@ -1109,6 +1065,10 @@ void LockManager::acquire_shmem(SRQ_PTR owner_offset)
 
 	while (SRQ_EMPTY(m_sharedMemory->getHeader()->lhb_processes))
 	{
+		fb_assert(!m_process);
+		if (m_process)
+			bug(NULL, "Process disappeared in LockManager::acquire_shmem");
+
 		if (m_sharedMemory->justCreated())
 		{
 			// no sense thinking about statistics now
@@ -1603,7 +1563,7 @@ void LockManager::bug(CheckStatusWrapper* statusVector, const TEXT* string)
 	{
 		m_bugcheck = true;
 
-		const lhb* const header = m_sharedMemory->getHeader();
+		const lhb* const header = m_sharedMemory ? m_sharedMemory->getHeader() : nullptr;
 
 		if (header)
 		{

@@ -45,6 +45,7 @@
 #include "../common/cvt.h"
 #include "../jrd/evl_proto.h"
 #include "../jrd/intl_proto.h"
+#include "../jrd/met_proto.h"
 #include "../jrd/mov_proto.h"
 #include "../jrd/pag_proto.h"
 #include "../jrd/tra_proto.h"
@@ -58,6 +59,7 @@
 #include "../common/classes/FpeControl.h"
 #include "../jrd/extds/ExtDS.h"
 
+#include <cmath>
 #include <math.h>
 
 #ifndef WIN_NT
@@ -169,9 +171,9 @@ const HashAlgorithmDescriptor* HashAlgorithmDescriptor::find(const char* name)
 
 // constants
 const int oneDay = 86400;
+const unsigned getContextLen = 255;
 
 // auxiliary functions
-void add10msec(ISC_TIMESTAMP* v, SINT64 msec, SINT64 multiplier);
 double fbcot(double value) throw();
 
 // generic setParams functions
@@ -193,21 +195,23 @@ void setParamsCharToUuid(DataTypeUtilBase* dataTypeUtil, const SysFunction* func
 void setParamsDateAdd(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
 void setParamsDateDiff(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
 void setParamsEncrypt(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args);
+void setParamsFirstLastDay(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
+void setParamsGetSetContext(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
+void setParamsMakeDbkey(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
+void setParamsOverlay(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
+void setParamsPosition(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
+void setParamsRoundTrunc(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
 void setParamsRsaEncrypt(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args);
 void setParamsRsaPublic(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args);
 void setParamsRsaSign(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args);
 void setParamsRsaVerify(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args);
-void setParamsFirstLastDay(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
-void setParamsGetSetContext(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
-void setParamsOverlay(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
-void setParamsPosition(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
-void setParamsRoundTrunc(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
 void setParamsUuidToChar(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, int argsCount, dsc** args);
 
 // generic make functions
-void makeDoubleResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
+void makeDbkeyResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
 void makeDblDecResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
 void makeDecFloatResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
+void makeDoubleResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
 void makeFromListResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
 void makeInt64Result(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
 void makeLongResult(DataTypeUtilBase* dataTypeUtil, const SysFunction* function, dsc* result, int argsCount, const dsc** args);
@@ -287,6 +291,7 @@ dsc* evlHash(thread_db* tdbb, const SysFunction* function, const NestValueArray&
 dsc* evlLeft(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
 dsc* evlLnLog10(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
 dsc* evlLog(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlMakeDbkey(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, Jrd::impure_value* impure);
 dsc* evlMaxMinValue(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
 dsc* evlMod(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
 dsc* evlOverlay(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
@@ -370,29 +375,6 @@ const char
 static const char
 	FALSE_VALUE[] = "FALSE",
 	TRUE_VALUE[] = "TRUE";
-
-
-void add10msec(ISC_TIMESTAMP* v, SINT64 msec, SINT64 multiplier)
-{
-	const SINT64 full = msec * multiplier;
-	const int days = full / (oneDay * ISC_TIME_SECONDS_PRECISION);
-	const int secs = full % (oneDay * ISC_TIME_SECONDS_PRECISION);
-
-	v->timestamp_date += days;
-
-	// Time portion is unsigned, so we avoid unsigned rolling over negative values
-	// that only produce a new unsigned number with the wrong result.
-	if (secs < 0 && ISC_TIME(-secs) > v->timestamp_time)
-	{
-		v->timestamp_date--;
-		v->timestamp_time += (oneDay * ISC_TIME_SECONDS_PRECISION) + secs;
-	}
-	else if ((v->timestamp_time += secs) >= (oneDay * ISC_TIME_SECONDS_PRECISION))
-	{
-		v->timestamp_date++;
-		v->timestamp_time -= (oneDay * ISC_TIME_SECONDS_PRECISION);
-	}
-}
 
 
 double fbcot(double value) throw()
@@ -753,6 +735,24 @@ void setParamsGetSetContext(DataTypeUtilBase*, const SysFunction*, int argsCount
 }
 
 
+void setParamsMakeDbkey(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args)
+{
+	// MAKE_DBKEY ( REL_NAME | REL_ID, RECNUM [, DPNUM [, PPNUM] ] )
+
+	if (args[0]->isUnknown())
+		args[0]->makeLong(0);
+
+	if (args[1]->isUnknown())
+		args[1]->makeInt64(0);
+
+	if (argsCount > 2 && args[2]->isUnknown())
+		args[2]->makeInt64(0);
+
+	if (argsCount > 3 && args[3]->isUnknown())
+		args[3]->makeInt64(0);
+}
+
+
 void setParamsOverlay(DataTypeUtilBase*, const SysFunction*, int argsCount, dsc** args)
 {
 	if (argsCount >= 3)
@@ -817,6 +817,14 @@ void setParamsUuidToChar(DataTypeUtilBase*, const SysFunction*, int argsCount, d
 {
 	if (argsCount >= 1 && args[0]->isUnknown())
 		args[0]->makeText(16, ttype_binary);
+}
+
+
+void makeDbkeyResult(DataTypeUtilBase*, const SysFunction*, dsc* result,
+	int argsCount, const dsc** args)
+{
+	result->makeText(8, ttype_binary);
+	result->setNullable(true);
 }
 
 
@@ -1220,7 +1228,7 @@ void makeGetSetContext(DataTypeUtilBase* /*dataTypeUtil*/, const SysFunction* fu
 		result->makeLong(0);
 	else
 	{
-		result->makeVarying(255, ttype_none);
+		result->makeVarying(getContextLen, ttype_none);
 		result->setNullable(true);
 	}
 }
@@ -1794,7 +1802,7 @@ dsc* evlStdMath(thread_db* tdbb, const SysFunction* function, const NestValueArr
 		return NULL;
 	}
 
-	if (isinf(rc))
+	if (std::isinf(rc))
 	{
 		status_exception::raise(Arg::Gds(isc_arith_except) <<
 								Arg::Gds(isc_sysf_fp_overflow) << Arg::Str(function->name));
@@ -2330,12 +2338,18 @@ dsc* evlDateAdd(thread_db* tdbb, const SysFunction* function, const NestValueArr
 	const SINT64 quantity = MOV_get_int64(tdbb, quantityDsc,
 		(part == blr_extract_millisecond ? milliScale : 0));
 
+	const ISC_STATUS rangeExceededStatus =
+		valueDsc->isTimeStamp() ? isc_datetime_range_exceeded :
+		valueDsc->isTime() ? isc_time_range_exceeded :
+		isc_date_range_exceeded;
+
 	switch (part)
 	{
-		// TO DO: detect overflow in the following cases.
-
 		case blr_extract_year:
 			{
+				if (fb_utils::abs64Compare(quantity, 9999) > 0)
+					ERR_post(Arg::Gds(rangeExceededStatus));
+
 				tm times;
 				timestamp.decode(&times);
 				times.tm_year += quantity;
@@ -2351,6 +2365,9 @@ dsc* evlDateAdd(thread_db* tdbb, const SysFunction* function, const NestValueArr
 
 		case blr_extract_month:
 			{
+				if (fb_utils::abs64Compare(quantity, 9999 * 12) > 0)
+					ERR_post(Arg::Gds(rangeExceededStatus));
+
 				tm times;
 				timestamp.decode(&times);
 
@@ -2392,39 +2409,61 @@ dsc* evlDateAdd(thread_db* tdbb, const SysFunction* function, const NestValueArr
 			break;
 
 		case blr_extract_day:
+			if (fb_utils::abs64Compare(quantity, TimeStamp::MAX_DATE - TimeStamp::MIN_DATE) > 0)
+				ERR_post(Arg::Gds(rangeExceededStatus));
 			timestamp.value().timestamp_date += quantity;
 			break;
 
 		case blr_extract_week:
+			if (fb_utils::abs64Compare(quantity, (TimeStamp::MAX_DATE - TimeStamp::MIN_DATE) / 7 + 1) > 0)
+				ERR_post(Arg::Gds(rangeExceededStatus));
 			timestamp.value().timestamp_date += quantity * 7;
 			break;
 
 		case blr_extract_hour:
+			if (fb_utils::abs64Compare(quantity, SINT64(TimeStamp::MAX_DATE - TimeStamp::MIN_DATE + 1) * 24) > 0)
+				ERR_post(Arg::Gds(rangeExceededStatus));
+
 			if (valueDsc->dsc_dtype == dtype_sql_date)
 				timestamp.value().timestamp_date += quantity / 24;
 			else
-				add10msec(&timestamp.value(), quantity, 3600 * ISC_TIME_SECONDS_PRECISION);
+				NoThrowTimeStamp::add10msec(&timestamp.value(), quantity, 3600 * ISC_TIME_SECONDS_PRECISION);
 			break;
 
 		case blr_extract_minute:
+			if (fb_utils::abs64Compare(quantity, SINT64(TimeStamp::MAX_DATE - TimeStamp::MIN_DATE + 1) * 24 * 60) > 0)
+				ERR_post(Arg::Gds(rangeExceededStatus));
+
 			if (valueDsc->dsc_dtype == dtype_sql_date)
 				timestamp.value().timestamp_date += quantity / 1440; // 1440 == 24 * 60
 			else
-				add10msec(&timestamp.value(), quantity, 60 * ISC_TIME_SECONDS_PRECISION);
+				NoThrowTimeStamp::add10msec(&timestamp.value(), quantity, 60 * ISC_TIME_SECONDS_PRECISION);
 			break;
 
 		case blr_extract_second:
+			if (fb_utils::abs64Compare(quantity,
+					SINT64(TimeStamp::MAX_DATE - TimeStamp::MIN_DATE + 1) * 24 * 60 * 60) > 0)
+			{
+				ERR_post(Arg::Gds(rangeExceededStatus));
+			}
+
 			if (valueDsc->dsc_dtype == dtype_sql_date)
 				timestamp.value().timestamp_date += quantity / oneDay;
 			else
-				add10msec(&timestamp.value(), quantity, ISC_TIME_SECONDS_PRECISION);
+				NoThrowTimeStamp::add10msec(&timestamp.value(), quantity, ISC_TIME_SECONDS_PRECISION);
 			break;
 
 		case blr_extract_millisecond:
+			if (fb_utils::abs64Compare(quantity,
+					SINT64(TimeStamp::MAX_DATE - TimeStamp::MIN_DATE + 1) * 24 * 60 * 60 * 1000 * milliPow) > 0)
+			{
+				ERR_post(Arg::Gds(rangeExceededStatus));
+			}
+
 			if (valueDsc->dsc_dtype == dtype_sql_date)
 				timestamp.value().timestamp_date += quantity / milliPow / (oneDay * 1000);
 			else
-				add10msec(&timestamp.value(), quantity, ISC_TIME_SECONDS_PRECISION / 1000 / milliPow);
+				NoThrowTimeStamp::add10msec(&timestamp.value(), quantity, ISC_TIME_SECONDS_PRECISION / 1000 / milliPow);
 			break;
 
 		default:
@@ -2436,7 +2475,7 @@ dsc* evlDateAdd(thread_db* tdbb, const SysFunction* function, const NestValueArr
 	}
 
 	if (!TimeStamp::isValidTimeStamp(timestamp.value()))
-		status_exception::raise(Arg::Gds(isc_datetime_range_exceeded));
+		status_exception::raise(Arg::Gds(rangeExceededStatus));
 
 	EVL_make_value(tdbb, valueDsc, impure);
 
@@ -3534,7 +3573,10 @@ dsc* evlDateDiff(thread_db* tdbb, const SysFunction* function, const NestValueAr
 			timestamp1.value().timestamp_date = 0;
 
 			if (value1Dsc->dsc_dtype == dtype_sql_time && value2Dsc->isDateTimeTz())
-				TimeZoneUtil::localTimeToUtc(timestamp1.value().timestamp_time, &EngineCallbacks::instance);
+			{
+				TimeZoneUtil::localTimeToUtc(timestamp1.value().timestamp_time,
+					EngineCallbacks::instance->getSessionTimeZone());
+			}
 			break;
 
 		case dtype_sql_date:
@@ -3567,7 +3609,10 @@ dsc* evlDateDiff(thread_db* tdbb, const SysFunction* function, const NestValueAr
 			timestamp2.value().timestamp_date = 0;
 
 			if (value2Dsc->dsc_dtype == dtype_sql_time && value1Dsc->isDateTimeTz())
-				TimeZoneUtil::localTimeToUtc(timestamp2.value().timestamp_time, &EngineCallbacks::instance);
+			{
+				TimeZoneUtil::localTimeToUtc(timestamp2.value().timestamp_time,
+					EngineCallbacks::instance->getSessionTimeZone());
+			}
 			break;
 
 		case dtype_sql_date:
@@ -3755,7 +3800,7 @@ dsc* evlExp(thread_db* tdbb, const SysFunction*, const NestValueArray& args,
 		const double rc = exp(MOV_get_double(tdbb, value));
 		if (rc == HUGE_VAL) // unlikely to trap anything
 			status_exception::raise(Arg::Gds(isc_arith_except) << Arg::Gds(isc_exception_float_overflow));
-		if (isinf(rc))
+		if (std::isinf(rc))
 			status_exception::raise(Arg::Gds(isc_arith_except) << Arg::Gds(isc_exception_float_overflow));
 
 		impure->vlu_misc.vlu_double = rc;
@@ -3799,7 +3844,8 @@ dsc* evlFirstLastDay(thread_db* tdbb, const SysFunction* function, const NestVal
 			break;
 
 		case dtype_timestamp_tz:
-			TimeZoneUtil::decodeTimeStamp(*(ISC_TIMESTAMP_TZ*) valueDsc->dsc_address, false, &times, &fractions);
+			TimeZoneUtil::decodeTimeStamp(*(ISC_TIMESTAMP_TZ*) valueDsc->dsc_address, false, TimeZoneUtil::NO_OFFSET,
+				&times, &fractions);
 			break;
 
 		default:
@@ -4250,7 +4296,13 @@ dsc* evlGetContext(thread_db* tdbb, const SysFunction*, const NestValueArray& ar
 	}
 
 	dsc result;
-	result.makeText(resultStr.length(), resultType,
+	unsigned l = resultStr.length();
+	if (l > getContextLen)
+	{
+		l = getContextLen;
+		ERR_post_warning(Arg::Warning(isc_truncate_warn) << Arg::Warning(isc_truncate_context));
+	}
+	result.makeText(l, resultType,
 		(UCHAR*) const_cast<char*>(resultStr.c_str()));	// safe const_cast
 	EVL_make_value(tdbb, &result, impure);
 
@@ -4755,6 +4807,106 @@ dsc* evlNormDec(thread_db* tdbb, const SysFunction* function, const NestValueArr
 		impure->vlu_misc.vlu_dec128 = v.normalize(decSt);
 		impure->vlu_desc.makeDecimal128(&impure->vlu_misc.vlu_dec128);
 	}
+
+	return &impure->vlu_desc;
+}
+
+
+dsc* evlMakeDbkey(Jrd::thread_db* tdbb, const SysFunction* function, const NestValueArray& args, Jrd::impure_value* impure)
+{
+	// MAKE_DBKEY ( REL_NAME | REL_ID, RECNUM [, DPNUM [, PPNUM] ] )
+
+	Database* const dbb = tdbb->getDatabase();
+	jrd_req* const request = tdbb->getRequest();
+
+	fb_assert(args.getCount() >= 2 && args.getCount() <= 4);
+
+	dsc* argDsc = EVL_expr(tdbb, request, args[0]);
+	if (request->req_flags & req_null)	// return NULL if relation is NULL
+		return NULL;
+
+	USHORT relId;
+
+	if (argDsc->isText())
+	{
+		MetaName relName;
+		MOV_get_metaname(tdbb, argDsc, relName);
+
+		const jrd_rel* const relation = MET_lookup_relation(tdbb, relName);
+		if (!relation)
+			(Arg::Gds(isc_relnotdef) << Arg::Str(relName)).raise();
+
+		relId = relation->rel_id;
+	}
+	else
+	{
+		const SLONG value = MOV_get_long(tdbb, argDsc, 0);
+		if (value < 0 || value > MAX_USHORT) // return NULL if the provided ID is too long
+			return NULL;
+
+		relId = (USHORT) value;
+	}
+
+	argDsc = EVL_expr(tdbb, request, args[1]);
+	if (request->req_flags & req_null)
+		return NULL;
+
+	SINT64 recNo = MOV_get_int64(tdbb, argDsc, 0);
+
+	SINT64 dpNum = 0, ppNum = 0;
+
+	if (args.getCount() > 2)
+	{
+		argDsc = EVL_expr(tdbb, request, args[2]);
+		if (request->req_flags & req_null)
+			return NULL;
+
+		dpNum = MOV_get_int64(tdbb, argDsc, 0);
+		if (dpNum > MAX_ULONG)
+			return NULL;
+	}
+
+	if (args.getCount() > 3)
+	{
+		argDsc = EVL_expr(tdbb, request, args[3]);
+		if (request->req_flags & req_null)
+			return NULL;
+
+		ppNum = MOV_get_int64(tdbb, argDsc, 0);
+		if (ppNum < 0 || ppNum > MAX_ULONG)
+			return NULL;
+	}
+
+	RecordNumber temp;
+
+	if (args.getCount() == 4)
+		recNo += (ppNum * dbb->dbb_dp_per_pp + dpNum) * dbb->dbb_max_records;
+	else if (args.getCount() == 3)
+	{
+		if (dpNum < 0)
+			return NULL;
+		recNo += dpNum * dbb->dbb_max_records;
+	}
+
+	if (recNo < 0)
+		return NULL;
+
+	temp.setValue(recNo + 1);
+
+	RecordNumber::Packed dbkey;
+	memset(&dbkey, 0, sizeof(dbkey));
+	temp.bid_encode(&dbkey);
+	dbkey.bid_relation_id = relId;
+
+	dsc dscKey;
+	dscKey.makeDbkey(&dbkey);
+
+	UCHAR buffer[sizeof(dbkey)];
+	dsc result;
+	result.makeText(sizeof(dbkey), ttype_binary, buffer);
+
+	MOV_move(tdbb, &dscKey, &result);
+	EVL_make_value(tdbb, &result, impure);
 
 	return &impure->vlu_desc;
 }
@@ -5385,7 +5537,7 @@ dsc* evlPower(thread_db* tdbb, const SysFunction* function, const NestValueArray
 		}
 
 		const double rc = pow(v1, v2);
-		if (isinf(rc))
+		if (std::isinf(rc))
 			status_exception::raise(Arg::Gds(isc_arith_except) << Arg::Gds(isc_exception_float_overflow));
 
 		impure->vlu_misc.vlu_double = rc;
@@ -6063,6 +6215,7 @@ const SysFunction SysFunction::functions[] =
 		{"LOG", 2, 2, setParamsDblDec, makeDblDecResult, evlLog, NULL},
 		{"LOG10", 1, 1, setParamsDblDec, makeDblDecResult, evlLnLog10, (void*) funLog10},
 		{"LPAD", 2, 3, setParamsSecondInteger, makePad, evlPad, (void*) funLPad},
+		{"MAKE_DBKEY", 2, 4, setParamsMakeDbkey, makeDbkeyResult, evlMakeDbkey, NULL},
 		{"MAXVALUE", 1, -1, setParamsFromList, makeFromListResult, evlMaxMinValue, (void*) funMaxValue},
 		{"MINVALUE", 1, -1, setParamsFromList, makeFromListResult, evlMaxMinValue, (void*) funMinValue},
 		{"MOD", 2, 2, setParamsFromList, makeMod, evlMod, NULL},

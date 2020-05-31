@@ -138,7 +138,6 @@ void ChangeLog::Segment::init(FB_UINT64 sequence, const Guid& guid)
 	m_header->hdr_version = LOG_CURRENT_VERSION;
 	m_header->hdr_state = SEGMENT_STATE_USED;
 	memcpy(&m_header->hdr_guid, &guid, sizeof(Guid));
-	m_header->hdr_protocol = PROTOCOL_CURRENT_VERSION;
 	m_header->hdr_sequence = sequence;
 	m_header->hdr_length = sizeof(SegmentHeader);
 
@@ -164,15 +163,12 @@ bool ChangeLog::Segment::validate(const Guid& guid) const
 	if (memcmp(&m_header->hdr_guid, &guid, sizeof(Guid)))
 		return false;
 
-	if (m_header->hdr_protocol != PROTOCOL_VERSION1)
-		return false;
-
 	return true;
 }
 
 void ChangeLog::Segment::copyTo(const PathName& filename) const
 {
-	if (::lseek(m_handle, 0, SEEK_SET) != 0)
+	if (os_utils::lseek(m_handle, 0, SEEK_SET) != 0)
 		raiseIOError("seek", m_filename.c_str());
 
 	const auto totalLength = m_header->hdr_length;
@@ -185,10 +181,10 @@ void ChangeLog::Segment::copyTo(const PathName& filename) const
 	Vector<UCHAR, COPY_BLOCK_SIZE> buffer;
 	const auto data = buffer.begin();
 
-	for (ULONG offset = 0; offset < totalLength; offset += COPY_BLOCK_SIZE)
+	for (FB_UINT64 offset = 0; offset < totalLength; offset += COPY_BLOCK_SIZE)
 	{
 		const auto remaining = totalLength - offset;
-		const auto length = MIN(remaining, COPY_BLOCK_SIZE);
+		const SINT64 length = MIN(remaining, COPY_BLOCK_SIZE);
 
 		if (::read(m_handle, data, length) != length)
 		{
@@ -213,9 +209,9 @@ void ChangeLog::Segment::append(ULONG length, const UCHAR* data)
 	fb_assert(m_header->hdr_state == SEGMENT_STATE_USED);
 	fb_assert(length);
 
-	const auto currentLength = m_header->hdr_length;
+	const auto currentLength = (SINT64) m_header->hdr_length;
 
-	if (::lseek(m_handle, currentLength, SEEK_SET) != currentLength)
+	if (os_utils::lseek(m_handle, currentLength, SEEK_SET) != currentLength)
 		raiseError("Log file %s seek failed (error %d)", m_filename.c_str(), ERRNO);
 
 	if (::write(m_handle, data, length) != length)
@@ -238,10 +234,16 @@ void ChangeLog::Segment::truncate()
 	unmapHeader();
 
 #ifdef WIN_NT
-	chsize(m_handle, length);
+	LARGE_INTEGER newSize;
+	newSize.QuadPart = (ULONGLONG) length;
+
+	const auto hndl = (HANDLE) _get_osfhandle(m_handle);
+	const auto ret = SetFilePointer(hndl, newSize.LowPart, &newSize.HighPart, FILE_BEGIN);
+	if (ret == INVALID_SET_FILE_POINTER || !SetEndOfFile(hndl))
 #else
-	ftruncate(m_handle, length);
+	if (os_utils::ftruncate(m_handle, length))
 #endif
+		raiseError("Log file %s truncate failed (error %d)", m_filename.c_str(), ERRNO);
 
 	mapHeader();
 }
@@ -308,13 +310,12 @@ PathName ChangeLog::Segment::getFileName() const
 
 ChangeLog::ChangeLog(MemoryPool& pool,
 					 const string& dbId,
-					 const PathName& database,
 					 const Guid& guid,
 					 const FB_UINT64 sequence,
 					 const Replication::Config* config)
 	: PermanentStorage(pool),
-	  m_dbId(pool, dbId), m_database(pool, database),
-	  m_config(config), m_segments(pool), m_sequence(sequence), m_shutdown(false)
+	  m_dbId(dbId), m_config(config),
+	  m_segments(pool), m_sequence(sequence), m_shutdown(false)
 {
 	memcpy(&m_guid, &guid, sizeof(Guid));
 
@@ -360,7 +361,13 @@ ChangeLog::~ChangeLog()
 
 		if (unlinkSelf())
 		{
+			// We're the last owner going away, so mark the active segment as full.
+			// Then attempt archiving the full segments.
+
 			switchActiveSegment();
+
+			// At this point checkouts are disabled, thus it's safe
+			// to iterate through the segments without restarts
 
 			for (const auto segment : m_segments)
 			{
@@ -564,7 +571,7 @@ FB_UINT64 ChangeLog::write(ULONG length, const UCHAR* data, bool sync)
 			const string warningMsg =
 				"Out of available space in changelog segments, waiting for archiving...";
 
-			logOriginMessage(m_database, warningMsg, WARNING_MSG);
+			logOriginMessage(m_config->dbName, warningMsg, WARNING_MSG);
 		}
 
 		{	// scope
@@ -580,7 +587,7 @@ FB_UINT64 ChangeLog::write(ULONG length, const UCHAR* data, bool sync)
 
 	const auto state = m_sharedMemory->getHeader();
 
-	if (segment->getLength() == sizeof(SegmentHeader))
+	if (segment->isEmpty())
 		state->timestamp = time(NULL);
 
 	segment->append(length, data);
@@ -618,7 +625,9 @@ FB_UINT64 ChangeLog::write(ULONG length, const UCHAR* data, bool sync)
 		}
 	}
 
-	return state->sequence;
+	fb_assert(segment->getSequence() == state->sequence);
+
+	return segment->getSequence();
 }
 
 bool ChangeLog::archiveExecute(Segment* segment)
@@ -666,7 +675,7 @@ bool ChangeLog::archiveExecute(Segment* segment)
 								res, archiveCommand.c_str());
 			}
 
-			logOriginMessage(m_database, errorMsg, ERROR_MSG);
+			logOriginMessage(m_config->dbName, errorMsg, ERROR_MSG);
 			return false;
 		}
 	}
@@ -684,7 +693,7 @@ bool ChangeLog::archiveExecute(Segment* segment)
 				warningMsg.printf("Destination log file %s exists, it will be overwritten",
 								  archpathname.c_str());
 
-				logOriginMessage(m_database, warningMsg, WARNING_MSG);
+				logOriginMessage(m_config->dbName, warningMsg, WARNING_MSG);
 			}
 		}
 
@@ -706,13 +715,13 @@ bool ChangeLog::archiveExecute(Segment* segment)
 				errorMsg += temp;
 			}
 
-			logOriginMessage(m_database, errorMsg, ERROR_MSG);
+			logOriginMessage(m_config->dbName, errorMsg, ERROR_MSG);
 			return false;
 		}
 		catch (...)
 		{
 			const string errorMsg = "Cannot copy log segment (reason unknown)";
-			logOriginMessage(m_database, errorMsg, ERROR_MSG);
+			logOriginMessage(m_config->dbName, errorMsg, ERROR_MSG);
 			return false;
 		}
 	}
@@ -741,25 +750,26 @@ bool ChangeLog::archiveSegment(Segment* segment)
 
 void ChangeLog::switchActiveSegment()
 {
-	Segment* activeSegment = NULL;
-
 	for (const auto segment : m_segments)
 	{
 		const auto segmentState = segment->getState();
 
 		if (segmentState == SEGMENT_STATE_USED)
 		{
-			activeSegment = segment;
+			if (segment->hasData())
+			{
+				const auto state = m_sharedMemory->getHeader();
+				fb_assert(segment->getSequence() == state->sequence);
+
+				segment->setState(SEGMENT_STATE_FULL);
+				state->flushMark++;
+
+				if (!m_shutdown)
+					m_workingSemaphore.release();
+			}
+
 			break;
 		}
-	}
-
-	if (activeSegment)
-	{
-		const auto state = m_sharedMemory->getHeader();
-
-		activeSegment->setState(SEGMENT_STATE_FULL);
-		state->flushMark++;
 	}
 }
 
@@ -780,7 +790,7 @@ void ChangeLog::bgArchiver()
 			{
 				if (segment->getState() == SEGMENT_STATE_USED)
 				{
-					if (segment->getLength() > sizeof(SegmentHeader) && m_config->logArchiveTimeout)
+					if (segment->hasData() && m_config->logArchiveTimeout)
 					{
 						const auto delta_timestamp = time(NULL) - state->timestamp;
 
@@ -983,7 +993,7 @@ ChangeLog::Segment* ChangeLog::getSegment(ULONG length)
 			activeSegment = NULL;
 			m_workingSemaphore.release();
 		}
-		else if (activeSegment->getLength() > sizeof(SegmentHeader) && m_config->logArchiveTimeout)
+		else if (activeSegment->hasData() && m_config->logArchiveTimeout)
 		{
 			const size_t deltaTimestamp = time(NULL) - state->timestamp;
 

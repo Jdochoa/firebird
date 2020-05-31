@@ -547,7 +547,11 @@ void GEN_rse(DsqlCompilerScratch* dsqlScratch, RseNode* rse)
 		fb_assert(rse->dsqlStreams->items.getCount() == 2);
 	}
 	else
-		dsqlScratch->appendUChar(blr_rse);
+	{
+		const auto blrOp =
+			(rse->dsqlFlags & RecordSourceNode::DFLAG_LATERAL) ? blr_lateral_rse : blr_rse;
+		dsqlScratch->appendUChar(blrOp);
+	}
 
 	// Handle source streams
 

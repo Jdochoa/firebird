@@ -1164,7 +1164,7 @@ namespace Jrd
 
 					// strip spam messages
 					const ISC_STATUS* v = status->getErrors();
-					for (; v[0] == isc_arg_gds; v = fb_utils::nextArg(v))
+					for (; v[0] == isc_arg_gds; v = fb_utils::nextCode(v))
 					{
 						if (v[1] != isc_dsql_error && v[1] != isc_sqlerr)
 							break;
@@ -1283,6 +1283,7 @@ static void			init_database_lock(thread_db*);
 static void			run_commit_triggers(thread_db* tdbb, jrd_tra* transaction);
 static jrd_req*		verify_request_synchronization(JrdStatement* statement, USHORT level);
 static void			purge_transactions(thread_db*, Jrd::Attachment*, const bool);
+static void			check_single_maintenance(thread_db* tdbb);
 
 namespace {
 	enum VdnResult {VDN_FAIL, VDN_OK/*, VDN_SECURITY*/};
@@ -1761,8 +1762,8 @@ JAttachment* JProvider::internalAttach(CheckStatusWrapper* user_status, const ch
 				PageSpace* pageSpace = dbb->dbb_page_manager.findPageSpace(DB_PAGE_SPACE);
 				pageSpace->file = PIO_open(tdbb, expanded_name, org_filename);
 
-				// Initialize the lock manager
-				dbb->dbb_lock_mgr = LockManager::create(dbb->getUniqueFileId(), dbb->dbb_config);
+				// Initialize the global object holder
+				dbb->initGlobalObjectHolder(tdbb);
 
 				// Initialize locks
 				LCK_init(tdbb, LCK_OWNER_database);
@@ -1829,9 +1830,8 @@ JAttachment* JProvider::internalAttach(CheckStatusWrapper* user_status, const ch
 					err.raise();
 				}
 
-				fb_assert(dbb->dbb_lock_mgr);
-
 				LCK_init(tdbb, LCK_OWNER_attachment);
+				check_single_maintenance(tdbb);
 				jAtt->getStable()->manualAsyncUnlock(attachment->att_flags);
 
 				INI_init(tdbb);
@@ -2225,7 +2225,8 @@ JAttachment* JProvider::internalAttach(CheckStatusWrapper* user_status, const ch
 			}
 			else
 			{
-				trace_failed_attach(attachment ? attachment->att_trace_manager : NULL,
+				trace_failed_attach(attachment && attachment->att_trace_manager &&
+					attachment->att_trace_manager->isActive() ? attachment->att_trace_manager : NULL,
 					filename, options, false, user_status);
 			}
 
@@ -2371,11 +2372,10 @@ void JEvents::freeEngineData(CheckStatusWrapper* user_status)
 		try
 		{
 			Database* const dbb = tdbb->getDatabase();
+			Attachment* const attachment = tdbb->getAttachment();
 
-			if (dbb->dbb_event_mgr)
-			{
-				dbb->dbb_event_mgr->cancelEvents(id);
-			}
+			if (attachment->att_event_session)
+				dbb->eventManager()->cancelEvents(id);
 
 			id = -1;
 		}
@@ -2958,8 +2958,8 @@ JAttachment* JProvider::createDatabase(CheckStatusWrapper* user_status, const ch
 			os_utils::getUniqueFileId(dbb->dbb_filename.c_str(), dbb->dbb_id);
 #endif
 
-			// Initialize the lock manager
-			dbb->dbb_lock_mgr = LockManager::create(dbb->getUniqueFileId(), dbb->dbb_config);
+			// Initialize the global object holder
+			dbb->initGlobalObjectHolder(tdbb);
 
 			// Initialize locks
 			LCK_init(tdbb, LCK_OWNER_database);
@@ -3003,6 +3003,9 @@ JAttachment* JProvider::createDatabase(CheckStatusWrapper* user_status, const ch
 			PAG_format_pip(tdbb, *pageSpace);
 
 			dbb->dbb_page_manager.initTempPageSpace(tdbb);
+
+			GenerateGuid(&dbb->dbb_guid);
+			PAG_set_db_guid(tdbb, dbb->dbb_guid);
 
 			if (options.dpb_set_page_buffers)
 				PAG_set_page_buffers(tdbb, options.dpb_page_buffers);
@@ -3117,7 +3120,8 @@ JAttachment* JProvider::createDatabase(CheckStatusWrapper* user_status, const ch
 		catch (const Exception& ex)
 		{
 			ex.stuffException(user_status);
-			trace_failed_attach(attachment ? attachment->att_trace_manager : NULL,
+			trace_failed_attach(attachment && attachment->att_trace_manager &&
+				attachment->att_trace_manager->isActive() ? attachment->att_trace_manager : NULL,
 				filename, options, true, user_status);
 
 			mapping.clearMainHandle();
@@ -3743,11 +3747,13 @@ JEvents* JAttachment::queEvents(CheckStatusWrapper* user_status, IEventCallback*
 		try
 		{
 			Database* const dbb = tdbb->getDatabase();
+			Attachment* const attachment = getHandle();
 
-			EventManager::init(getHandle());
+			EventManager::init(attachment);
 
-			int id = dbb->dbb_event_mgr->queEvents(getHandle()->att_event_session,
-												   length, events, callback);
+			const int id = dbb->eventManager()->queEvents(attachment->att_event_session,
+														  length, events, callback);
+
 			ev = FB_NEW JEvents(id, getStable(), callback);
 			ev->addRef();
 		}
@@ -4916,10 +4922,16 @@ ITransaction* JStatement::execute(CheckStatusWrapper* user_status, ITransaction*
 			}
 			else if (tra && !jt)
 			{
-				apiTra = NULL;		// Get ready for correct return in OOM case
-				jt = FB_NEW JTransaction(tra, getAttachment());
-				tra->setInterface(jt);
-				jt->addRef();
+				jt = tra->getInterface(false);
+				if (jt)
+					tra->tra_flags &= ~TRA_own_interface;
+				else
+				{
+					apiTra = NULL;		// Get ready for correct return in OOM case
+					jt = FB_NEW JTransaction(tra, getAttachment());
+					tra->setInterface(jt);
+					jt->addRef();
+				}
 			}
 			else if (tra && jt)
 			{
@@ -5065,10 +5077,16 @@ ITransaction* JAttachment::execute(CheckStatusWrapper* user_status, ITransaction
 			}
 			else if (tra && !jt)
 			{
-				apiTra = NULL;		// Get ready for correct return in OOM case
-				jt = FB_NEW JTransaction(tra, getStable());
-				jt->addRef();
-				tra->setInterface(jt);
+				jt = tra->getInterface(false);
+				if (jt)
+					tra->tra_flags &= ~TRA_own_interface;
+				else
+				{
+					apiTra = NULL;		// Get ready for correct return in OOM case
+					jt = FB_NEW JTransaction(tra, getStable());
+					jt->addRef();
+					tra->setInterface(jt);
+				}
 			}
 			else if (tra && jt)
 			{
@@ -5453,6 +5471,14 @@ JStatement* JAttachment::prepare(CheckStatusWrapper* user_status, ITransaction* 
 		try
 		{
 			Array<UCHAR> items, buffer;
+
+			// ASF: The original code (first commit) was:
+			// buffer.resize(StatementMetadata::buildInfoItems(items, flags));
+			// which makes DSQL_prepare internals to fill the statement metadata.
+			// The code as now makes DSQL_prepare to not do this job.
+			// For embedded connection I believe the pre-filling is better but for
+			// remote I'm not sure it's unnecessary job, so I'm only putting that
+			// observation for now.
 			StatementMetadata::buildInfoItems(items, flags);
 
 			statement = DSQL_prepare(tdbb, getHandle(), tra, stmtLength, sqlStmt, dialect,
@@ -7316,6 +7342,21 @@ static JAttachment* create_attachment(const PathName& alias_name,
 }
 
 
+static void check_single_maintenance(thread_db* tdbb)
+{
+	UCHAR spare_memory[RAW_HEADER_SIZE + PAGE_ALIGNMENT];
+	UCHAR* header_page_buffer = FB_ALIGN(spare_memory, PAGE_ALIGNMENT);
+	Ods::header_page* const header_page = reinterpret_cast<Ods::header_page*>(header_page_buffer);
+
+	PIO_header(tdbb, header_page_buffer, RAW_HEADER_SIZE);
+
+	if ((header_page->hdr_flags & Ods::hdr_shutdown_mask) == Ods::hdr_shutdown_single)
+	{
+		ERR_post(Arg::Gds(isc_shutdown) << Arg::Str(tdbb->getAttachment()->att_filename));
+	}
+}
+
+
 static void init_database_lock(thread_db* tdbb)
 {
 /**************************************
@@ -7354,16 +7395,7 @@ static void init_database_lock(thread_db* tdbb)
 			fb_utils::init_status(tdbb->tdbb_status_vector);
 
 			// If we are in a single-threaded maintenance mode then clean up and stop waiting
-			UCHAR spare_memory[RAW_HEADER_SIZE + PAGE_ALIGNMENT];
-			UCHAR* header_page_buffer = FB_ALIGN(spare_memory, PAGE_ALIGNMENT);
-			Ods::header_page* const header_page = reinterpret_cast<Ods::header_page*>(header_page_buffer);
-
-			PIO_header(tdbb, header_page_buffer, RAW_HEADER_SIZE);
-
-			if ((header_page->hdr_flags & Ods::hdr_shutdown_mask) == Ods::hdr_shutdown_single)
-			{
-				ERR_post(Arg::Gds(isc_shutdown) << Arg::Str(attachment->att_filename));
-			}
+			check_single_maintenance(tdbb);
 		}
 	}
 }
@@ -7434,8 +7466,8 @@ void release_attachment(thread_db* tdbb, Jrd::Attachment* attachment)
 	if (dbb->dbb_config->getServerMode() == MODE_SUPER)
 		attachment->releaseGTTs(tdbb);
 
-	if (dbb->dbb_event_mgr && attachment->att_event_session)
-		dbb->dbb_event_mgr->deleteSession(attachment->att_event_session);
+	if (attachment->att_event_session)
+		dbb->eventManager()->deleteSession(attachment->att_event_session);
 
     // CMP_release() changes att_requests.
 	while (attachment->att_requests.hasData())
@@ -7725,6 +7757,9 @@ bool JRD_shutdown_database(Database* dbb, const unsigned flags)
 
 	if (dbb->dbb_crypto_manager)
 		dbb->dbb_crypto_manager->shutdown(tdbb);
+
+	if (dbb->dbb_repl_lock)
+		LCK_release(tdbb, dbb->dbb_repl_lock);
 
 	if (dbb->dbb_shadow_lock)
 		LCK_release(tdbb, dbb->dbb_shadow_lock);
@@ -8597,12 +8632,10 @@ bool TimeoutTimer::getExpireTimestamp(const ISC_TIMESTAMP_TZ start, ISC_TIMESTAM
 	if (!m_started || m_expired)
 		return false;
 
-	SINT64 ticks = start.utc_timestamp.timestamp_date * TimeStamp::ISC_TICKS_PER_DAY +
-		start.utc_timestamp.timestamp_time;
+	SINT64 ticks = TimeStamp::timeStampToTicks(start.utc_timestamp);
 	ticks += m_value * ISC_TIME_SECONDS_PRECISION / 1000;
 
-	exp.utc_timestamp.timestamp_date = ticks / TimeStamp::ISC_TICKS_PER_DAY;
-	exp.utc_timestamp.timestamp_time = ticks % TimeStamp::ISC_TICKS_PER_DAY;
+	exp.utc_timestamp = TimeStamp::ticksToTimeStamp(ticks);
 	exp.time_zone = start.time_zone;
 
 	return true;
@@ -8664,19 +8697,12 @@ unsigned int TimeoutTimer::timeToExpire() const
 	return r > 0 ? r : 0;
 }
 
-bool TimeoutTimer::getExpireTimestamp(const ISC_TIMESTAMP_TZ start, ISC_TIMESTAMP_TZ& exp) const
+bool TimeoutTimer::getExpireClock(SINT64& clock) const
 {
 	if (!m_start)
 		return false;
 
-	SINT64 ticks = start.utc_timestamp.timestamp_date * TimeStamp::ISC_TICKS_PER_DAY +
-		start.utc_timestamp.timestamp_time;
-	ticks += m_value * ISC_TIME_SECONDS_PRECISION / 1000;
-
-	exp.utc_timestamp.timestamp_date = ticks / TimeStamp::ISC_TICKS_PER_DAY;
-	exp.utc_timestamp.timestamp_time = ticks % TimeStamp::ISC_TICKS_PER_DAY;
-	exp.time_zone = start.time_zone;
-
+	clock = m_start + m_value;
 	return true;
 }
 
@@ -8950,39 +8976,8 @@ void JRD_start(Jrd::thread_db* tdbb, jrd_req* request, jrd_tra* transaction)
  *	Get a record from the host program.
  *
  **************************************/
-
-	// Repeat execution to handle update conflicts, if any
-	int numTries = 0;
-	while (true)
-	{
-		try
-		{
-			EXE_unwind(tdbb, request);
-			EXE_start(tdbb, request, transaction);
-			break;
-		}
-		catch (const status_exception &ex)
-		{
-			const ISC_STATUS* v = ex.value();
-			if (// Update conflict error
-				v[0] == isc_arg_gds &&
-				v[1] == isc_update_conflict &&
-				// Read committed transaction with snapshots
-				(transaction->tra_flags & TRA_read_committed) &&
-				(transaction->tra_flags & TRA_read_consistency) &&
-				// Snapshot has been assigned to the request -
-				// it was top-level request
-				!TRA_get_prior_request(tdbb))
-			{
-				if (++numTries < 10)
-				{
-					fb_utils::init_status(tdbb->tdbb_status_vector);
-					continue;
-				}
-			}
-			throw;
-		}
-	}
+	EXE_unwind(tdbb, request);
+	EXE_start(tdbb, request, transaction);
 
 	check_autocommit(tdbb, request);
 
@@ -9071,40 +9066,9 @@ void JRD_start_and_send(thread_db* tdbb, jrd_req* request, jrd_tra* transaction,
  *	Get a record from the host program.
  *
  **************************************/
-
-	// Repeat execution to handle update conflicts, if any
-	int numTries = 0;
-	while (true)
-	{
-		try
-		{
-			EXE_unwind(tdbb, request);
-			EXE_start(tdbb, request, transaction);
-			EXE_send(tdbb, request, msg_type, msg_length, msg);
-			break;
-		}
-		catch (const status_exception &ex)
-		{
-			const ISC_STATUS* v = ex.value();
-			if (// Update conflict error
-				v[0] == isc_arg_gds &&
-				v[1] == isc_update_conflict &&
-				// Read committed transaction with snapshots
-				(transaction->tra_flags & TRA_read_committed) &&
-				(transaction->tra_flags & TRA_read_consistency) &&
-				// Snapshot has been assigned to the request -
-				// it was top-level request
-				!TRA_get_prior_request(tdbb))
-			{
-				if (++numTries < 10)
-				{
-					fb_utils::init_status(tdbb->tdbb_status_vector);
-					continue;
-				}
-			}
-			throw;
-		}
-	}
+	EXE_unwind(tdbb, request);
+	EXE_start(tdbb, request, transaction);
+	EXE_send(tdbb, request, msg_type, msg_length, msg);
 
 	check_autocommit(tdbb, request);
 

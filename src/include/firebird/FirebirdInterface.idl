@@ -32,6 +32,8 @@ typedef ISC_TIME;
 typedef ISC_TIMESTAMP;
 typedef ISC_TIME_TZ;
 typedef ISC_TIMESTAMP_TZ;
+typedef ISC_TIME_TZ_EX;
+typedef ISC_TIMESTAMP_TZ_EX;
 typedef FB_DEC16;
 typedef FB_DEC34;
 typedef FB_I128;
@@ -307,7 +309,8 @@ interface ConfigManager : Versioned
 	const uint DIR_LOG = 14;
 	const uint DIR_GUARD = 15;
 	const uint DIR_PLUGINS = 16;
-	const uint DIR_COUNT = 17;	// keep in sync
+	const uint DIR_TZDATA = 17;
+	const uint DIR_COUNT = 18;	// keep in sync
 
 	const string getDirectory(uint code);
 	FirebirdConf getFirebirdConf();
@@ -315,6 +318,9 @@ interface ConfigManager : Versioned
 	Config getPluginConfig(const string configuredPlugin);
 	const string getInstallDirectory();
 	const string getRootDirectory();
+
+version:		// 3.0 => 4.0
+	const string getDefaultSecurityDb();
 }
 
 
@@ -399,6 +405,12 @@ interface MetadataBuilder : ReferenceCounted
 	uint addField(Status status);
 
 	MessageMetadata getMetadata(Status status);
+
+version:	// 3.0 => 4.0
+	void setField(Status status, uint index, const string field);
+	void setRelation(Status status, uint index, const string relation);
+	void setOwner(Status status, uint index, const string owner);
+	void setAlias(Status status, uint index, const string alias);
 }
 
 interface ResultSet : ReferenceCounted
@@ -540,7 +552,7 @@ interface Replicator : ReferenceCounted
 */
 	void process(Status status, uint length, const uchar* data);
 	void close(Status status);
-} 
+}
 
 interface Request : ReferenceCounted
 {
@@ -1101,8 +1113,6 @@ interface Util : Versioned
 version:	// 3.0 => 4.0 Alpha1
 	DecFloat16 getDecFloat16(Status status);
 	DecFloat34 getDecFloat34(Status status);
-	Transaction getTransactionByHandle(Status status, isc_tr_handle* hndlPtr);
-	Statement getStatementByHandle(Status status, isc_stmt_handle* hndlPtr);
 	void decodeTimeTz(Status status, const ISC_TIME_TZ* timeTz, uint* hours, uint* minutes, uint* seconds,
 		uint* fractions, uint timeZoneBufferLength, string timeZoneBuffer);
 	void decodeTimeStampTz(Status status, const ISC_TIMESTAMP_TZ* timeStampTz, uint* year, uint* month, uint* day,
@@ -1114,6 +1124,10 @@ version:	// 3.0 => 4.0 Alpha1
 
 version:	// 4.0 Beta1 => 4.0 Beta2
 	Int128 getInt128(Status status);
+	void decodeTimeTzEx(Status status, const ISC_TIME_TZ_EX* timeTz, uint* hours, uint* minutes, uint* seconds,
+		uint* fractions, uint timeZoneBufferLength, string timeZoneBuffer);
+	void decodeTimeStampTzEx(Status status, const ISC_TIMESTAMP_TZ_EX* timeStampTz, uint* year, uint* month, uint* day,
+		uint* hours, uint* minutes, uint* seconds, uint* fractions, uint timeZoneBufferLength, string timeZoneBuffer);
 }
 
 interface OffsetsCallback : Versioned
@@ -1129,6 +1143,9 @@ interface XpbBuilder : Disposable
 	const uint TPB = 4;
 	const uint BATCH = 5;
 	const uint BPB = 6;
+	const uint SPB_SEND = 7;
+	const uint SPB_RECEIVE = 8;
+	const uint SPB_RESPONSE = 9;
 
 	// removing data
 	void clear(Status status);
@@ -1202,6 +1219,10 @@ interface TraceTransaction : Versioned
 	int getWait();
 	uint getIsolation();
 	PerformanceInfo* getPerf();
+
+version: // 3.0.4 -> 3.0.5
+	int64 getInitialID();
+	int64 getPreviousID();
 }
 
 interface TraceParams : Versioned
@@ -1568,6 +1589,7 @@ interface ReplicatedTransaction : Disposable
 	boolean storeBlob(ISC_QUAD blobId, ReplicatedBlob blob);
 
 	boolean executeSql(const string sql);
+	boolean executeSqlIntl(uint charset, const string sql);
 }
 
 interface ReplicatedSession : Disposable

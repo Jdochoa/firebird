@@ -26,13 +26,20 @@
 
 namespace Replication
 {
+	inline ULONG ENCODE_PROTOCOL(ULONG major, USHORT minor)
+	{
+		return ((major << 8) | minor);
+	}
+
 	// Supported protocol versions
-	const ULONG PROTOCOL_VERSION1 = 1;
-	const ULONG PROTOCOL_CURRENT_VERSION = PROTOCOL_VERSION1;
+	const ULONG PROTOCOL_VERSION_1 = 1;
+	const ULONG PROTOCOL_1_0 = ENCODE_PROTOCOL(PROTOCOL_VERSION_1, 0);
+	const ULONG PROTOCOL_CURRENT_VERSION = PROTOCOL_1_0;
 
 	struct Block
 	{
-		SINT64 traNumber;
+		FB_UINT64 traNumber;
+		ULONG protocol;
 		ULONG dataLength;
 		ULONG metaLength;
 		ULONG flags;
@@ -59,7 +66,8 @@ namespace Replication
 		opDeleteRecord = 11,
 		opStoreBlob = 12,
 		opExecuteSql = 13,
-		opSetSequence = 14
+		opSetSequence = 14,
+		opExecuteSqlIntl = 15
 	};
 
 } // namespace

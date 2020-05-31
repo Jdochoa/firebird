@@ -1082,7 +1082,7 @@ static void cleanup_port(rem_port* port)
 		port->port_xcc = NULL;
 	}
 
-	port->release();
+	port->releasePort();
 }
 
 

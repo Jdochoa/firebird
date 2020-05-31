@@ -1909,9 +1909,11 @@ static void gen_emodify( const act* action, int column)
 		gen_name(s2, reference, true);
 		if (field->fld_dtype == dtype_varying && field->fld_sub_type == dsc_text_type_fixed)
 		{
-			fprintf(gpreGlob.out_file, "memcpy (&%s, &%s, %d);", s2, s1, field->fld_length + sizeof(USHORT));
+			const int length = field->fld_length + sizeof(USHORT);
+			fprintf(gpreGlob.out_file, "memcpy (&%s, &%s, %d);", s2, s1, length);
 		}
-		else if (field->fld_dtype > dtype_cstring || (field->fld_sub_type == dsc_text_type_fixed && field->fld_length == 1))
+		else if (field->fld_dtype > dtype_cstring ||
+			(field->fld_sub_type == dsc_text_type_fixed && field->fld_length == 1))
 		{
 			fprintf(gpreGlob.out_file, "%s = %s;", s2, s1);
 		}

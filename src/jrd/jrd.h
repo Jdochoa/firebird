@@ -444,8 +444,8 @@ public:
 	// milliseconds left before timer expiration
 	unsigned int timeToExpire() const;
 
-	// evaluate expire timestamp using start timestamp
-	bool getExpireTimestamp(const ISC_TIMESTAMP_TZ start, ISC_TIMESTAMP_TZ& exp) const;
+	// clock value when timer will expire
+	bool getExpireClock(SINT64& clock) const;
 
 	// set timeout value in milliseconds and secondary error code
 	void setup(unsigned int value, ISC_STATUS error)

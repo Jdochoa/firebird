@@ -104,6 +104,7 @@ public:
 	StreamList outerStreams, subStreams;
 	StreamList compileStreams, beds, localStreams, keyStreams;
 	bool optimizeFirstRows;
+	bool isLateral;
 };
 
 // values for opt_conjunct_flags

@@ -704,3 +704,18 @@ RELATION(nam_time_zones, rel_time_zones, ODS_13_0, rel_virtual)
 	FIELD(f_tz_id, nam_tz_id, fld_tz_id, 0, ODS_13_0)
 	FIELD(f_tz_name, nam_tz_name, fld_tz_name, 0, ODS_13_0)
 END_RELATION
+
+// Relation 51 (RDB$PUBLICATIONS)
+RELATION(nam_pubs, rel_pubs, ODS_13_0, rel_persistent)
+	FIELD(f_pub_name, nam_pub_name, fld_pub_name, 1, ODS_13_0)
+	FIELD(f_pub_owner, nam_owner, fld_user, 1, ODS_13_0)
+	FIELD(f_pub_sys_flag, nam_sys_flag, fld_flag, 1, ODS_13_0)
+	FIELD(f_pub_active_flag, nam_active_flag, fld_flag, 1, ODS_13_0)
+	FIELD(f_pub_auto_enable, nam_auto_enable, fld_flag, 1, ODS_13_0)
+END_RELATION
+
+// Relation 52 (RDB$PUBLICATION_TABLES)
+RELATION(nam_pub_tables, rel_pub_tables, ODS_13_0, rel_persistent)
+	FIELD(f_pubtab_pub_name, nam_pub_name, fld_pub_name, 1, ODS_13_0)
+	FIELD(f_pubtab_tab_name, nam_tab_name, fld_r_name, 1, ODS_13_0)
+END_RELATION

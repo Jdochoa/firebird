@@ -59,16 +59,6 @@
 
 #include "ReplServer.h"
 
-#if defined(O_DSYNC)
-#define SYNC		O_DSYNC
-#elif defined(O_SYNC)
-#define SYNC		O_SYNC
-#elif defined(O_FSYNC)
-#define SYNC		O_FSYNC
-#else
-#define SYNC		0
-#endif
-
 #ifndef O_BINARY
 #define O_BINARY	0
 #endif
@@ -111,19 +101,24 @@ namespace
 
 	typedef SortedArray<ActiveTransaction, EmptyStorage<ActiveTransaction>, TraNumber, ActiveTransaction> TransactionList;
 
-	FB_UINT64 getOldestSequence(const TransactionList& transactions)
+	const ActiveTransaction* findOldest(const TransactionList& transactions)
 	{
 		if (transactions.isEmpty())
-			return 0;
+			return NULL;
 
-		FB_UINT64 sequence = MAX_UINT64;
+		const ActiveTransaction* oldest = NULL;
 
-		for (const ActiveTransaction* iter = transactions.begin(); iter != transactions.end(); ++iter)
-			sequence = MIN(sequence, iter->sequence);
+		for (const auto& txn : transactions)
+		{
+			if (!oldest || txn.sequence < oldest->sequence)
+				oldest = &txn;
+		}
 
-		fb_assert(sequence > 0 && sequence < MAX_UINT64);
+		fb_assert(oldest);
+		fb_assert(oldest->sequence > 0 && oldest->sequence < MAX_UINT64);
+		fb_assert(oldest->tra_id > 0 && oldest->tra_id < MAX_TRA_NUMBER);
 
-		return sequence;
+		return oldest;
 	}
 
 	class ControlFile : public AutoFile
@@ -207,6 +202,8 @@ namespace
 			}
 			else
 				raiseError("Control file %s appears corrupted", filename.c_str());
+
+			flush();
 		}
 
 		~ControlFile()
@@ -237,7 +234,9 @@ namespace
 			m_data.db_sequence = db_sequence;
 
 			lseek(m_handle, 0, SEEK_SET);
-			write(m_handle, &m_data, sizeof(Data));
+			if (write(m_handle, &m_data, sizeof(Data)) != sizeof(Data))
+				raiseError("Control file write failed (error: %d)", ERRNO);
+			flush();
 		}
 
 		void savePartial(FB_UINT64 sequence, ULONG offset, const TransactionList& transactions)
@@ -264,8 +263,11 @@ namespace
 				const ULONG txn_size = m_data.txn_count * sizeof(ActiveTransaction);
 
 				lseek(m_handle, 0, SEEK_SET);
-				write(m_handle, &m_data, sizeof(Data));
-				write(m_handle, transactions.begin(), txn_size);
+				if (write(m_handle, &m_data, sizeof(Data)) != sizeof(Data))
+					raiseError("Control file write failed (error: %d)", ERRNO);
+				if (write(m_handle, transactions.begin(), txn_size) != txn_size)
+					raiseError("Control file write failed (error: %d)", ERRNO);
+				flush();
 			}
 		}
 
@@ -281,8 +283,11 @@ namespace
 				const ULONG txn_size = m_data.txn_count * sizeof(ActiveTransaction);
 
 				lseek(m_handle, 0, SEEK_SET);
-				write(m_handle, &m_data, sizeof(Data));
-				write(m_handle, transactions.begin(), txn_size);
+				if (write(m_handle, &m_data, sizeof(Data)) != sizeof(Data))
+					raiseError("Control file write failed (error: %d)", ERRNO);
+				if (write(m_handle, transactions.begin(), txn_size) != txn_size)
+					raiseError("Control file write failed (error: %d)", ERRNO);
+				flush();
 			}
 		}
 
@@ -300,12 +305,21 @@ namespace
 			const PathName filename = directory + guidStr;
 
 			const int fd = os_utils::open(filename.c_str(),
-				O_CREAT | O_RDWR | O_BINARY | SYNC, ACCESS_MODE);
+				O_CREAT | O_RDWR | O_BINARY, ACCESS_MODE);
 
 			if (fd < 0)
 				raiseError("Control file %s open failed (error: %d)", filename.c_str(), ERRNO);
 
 			return fd;
+		}
+
+		void flush()
+		{
+#ifdef WIN_NT
+			FlushFileBuffers((HANDLE) _get_osfhandle(m_handle));
+#else
+			fsync(m_handle);
+#endif
 		}
 
 		Data m_data;
@@ -351,8 +365,6 @@ namespace
 		{
 			if (m_connected)
 				return m_sequence;
-
-			verbose("Connecting to database (%s)", m_config->dbName.c_str());
 
 			ClumpletWriter dpb(ClumpletReader::Tagged, MAX_DPB_SIZE, isc_dpb_version1);
 
@@ -401,8 +413,6 @@ namespace
 		{
 			if (m_attachment)
 			{
-				verbose("Disconnecting from database (%s)", m_config->dbName.c_str());
-
 #ifndef NO_DATABASE
 				FbLocalStatus localStatus;
 				m_replicator->close(&localStatus);
@@ -510,6 +520,33 @@ namespace
 
 	typedef SortedArray<LogSegment*, EmptyStorage<LogSegment*>, FB_UINT64, LogSegment> ProcessQueue;
 
+	string formatInterval(const TimeStamp& start, const TimeStamp& finish)
+	{
+		static const SINT64 MSEC_PER_DAY = 24 * 60 * 60 * 1000;
+
+		const SINT64 startMsec = ((SINT64) start.value().timestamp_date) * MSEC_PER_DAY +
+			(SINT64) start.value().timestamp_time / 10;
+		const SINT64 finishMsec = ((SINT64) finish.value().timestamp_date) * MSEC_PER_DAY +
+			(SINT64) finish.value().timestamp_time / 10;
+
+		const SINT64 delta = finishMsec - startMsec;
+
+		string value;
+
+		if (delta < 1000) // less than 1 second
+			value.printf("%u ms", (unsigned) delta);
+		else if (delta < 60 * 1000) // less than 1 minute
+			value.printf("%u second(s)", (unsigned) (delta / 1000));
+		else if (delta < 60 * 60 * 1000) // less than 1 hour
+			value.printf("%u minute(s)", (unsigned) (delta / 1000 / 60));
+		else if (delta < 24 * 60 * 60 * 1000) // less than 1 day
+			value.printf("%u hour(s)", (unsigned) (delta / 1000 / 60 / 60));
+		else
+			value.printf("%u day(s)", (unsigned) (delta / 1000 / 60 / 60 / 24));
+
+		return value;
+	}
+
 	void readConfig(TargetList& targets)
 	{
 		Array<Replication::Config*> replicas;
@@ -534,9 +571,6 @@ namespace
 		{
 			return false;
 		}
-
-		if (header->hdr_protocol != PROTOCOL_VERSION1)
-			return false;
 
 		return true;
 	}
@@ -592,8 +626,6 @@ namespace
 
 		try
 		{
-			target->verbose("Scanning directory (%s)", target->getDirectory().c_str());
-
 			// First pass: create the processing queue
 
 			for (auto iter = PathUtils::newDirIterator(pool, target->getConfig()->logSourceDirectory);
@@ -691,17 +723,19 @@ namespace
 
 			if (queue.isEmpty())
 			{
-				target->verbose("No suitable files found");
+				target->verbose("No new segments found, suspending for %u seconds",
+								target->getConfig()->applyIdleTimeout);
 				return ret;
 			}
 
-			target->verbose("Added %u segments to the processing queue", (ULONG) queue.getCount());
+			target->verbose("Added %u segment(s) to the processing queue", (ULONG) queue.getCount());
 
 			// Second pass: replicate the chain of contiguous segments
 
 			Array<UCHAR> buffer(pool);
 			TransactionList transactions(pool);
 
+			const FB_UINT64 max_sequence = queue.back()->header.hdr_sequence;
 			FB_UINT64 next_sequence = 0;
 			const bool restart = target->isShutdown();
 
@@ -721,7 +755,7 @@ namespace
 
 				if (sequence <= db_sequence)
 				{
-					target->verbose("Deleting file (%s) due to fast forward", segment->filename.c_str());
+					target->verbose("Deleting segment %" UQUADFORMAT " due to fast forward", sequence);
 					segment->remove();
 					continue;
 				}
@@ -736,14 +770,24 @@ namespace
 					last_offset = 0;
 				}
 
-				FB_UINT64 oldest_sequence = getOldestSequence(transactions);
+				// If no new segments appeared since our last attempt,
+				// then there's no point in replaying the whole sequence
+				if (max_sequence == last_sequence)
+				{
+					target->verbose("No new segments found, suspending for %u seconds",
+									target->getConfig()->applyIdleTimeout);
+					return ret;
+				}
+
+				const ActiveTransaction* oldest = findOldest(transactions);
+				FB_UINT64 oldest_sequence = oldest ? oldest->sequence : 0;
 
 				const FB_UINT64 threshold = oldest_sequence ? oldest_sequence :
 					(last_offset ? last_sequence : last_sequence + 1);
 
 				if (sequence < threshold)
 				{
-					target->verbose("Deleting file (%s) as priorly replicated", segment->filename.c_str());
+					target->verbose("Deleting segment %" UQUADFORMAT " as no longer needed", sequence);
 					segment->remove();
 					continue;
 				}
@@ -756,9 +800,6 @@ namespace
 
 				if (sequence < next_sequence)
 					continue;
-
-				target->verbose("Replicating file (%s), segment %" UQUADFORMAT,
-								segment->filename.c_str(), sequence);
 
 				const FB_UINT64 org_oldest_sequence = oldest_sequence;
 
@@ -774,6 +815,8 @@ namespace
 
 					raiseError("Log file %s open failed (error: %d)", segment->filename.c_str(), ERRNO);
 				}
+
+				const TimeStamp startTime(TimeStamp::getCurrentTimeStamp());
 
 				AutoFile file(fd);
 
@@ -814,10 +857,11 @@ namespace
 
 						if (!success)
 						{
-							oldest_sequence = getOldestSequence(transactions);
+							oldest = findOldest(transactions);
+							oldest_sequence = oldest ? oldest->sequence : 0;
 
-							target->verbose("Last segment:offset %" UQUADFORMAT ":%u, oldest segment %" UQUADFORMAT,
-								control.getSequence(), control.getOffset(), oldest_sequence);
+							target->verbose("Segment %" UQUADFORMAT " replication failure at offset %u",
+											sequence, totalLength);
 
 							localStatus.raise();
 						}
@@ -832,14 +876,30 @@ namespace
 
 				file.release();
 
-				target->verbose("Successfully replicated %u bytes in segment %" UQUADFORMAT,
-								totalLength, sequence);
+				const TimeStamp finishTime(TimeStamp::getCurrentTimeStamp());
+				const string interval = formatInterval(startTime, finishTime);
 
-				oldest_sequence = getOldestSequence(transactions);
+				oldest = findOldest(transactions);
+				oldest_sequence = oldest ? oldest->sequence : 0;
 				next_sequence = sequence + 1;
 
-				target->verbose("Last segment:offset %" UQUADFORMAT ":%u, oldest segment %" UQUADFORMAT,
-					control.getSequence(), control.getOffset(), oldest_sequence);
+				string extra;
+				if (oldest)
+				{
+					const TraNumber oldest_trans = oldest->tra_id;
+					extra.printf("preserving the file due to %u active transaction(s) (oldest: %" UQUADFORMAT " in segment %" UQUADFORMAT ")",
+								 (unsigned) transactions.getCount(), oldest_trans, oldest_sequence);
+				}
+				else
+				{
+					extra += "deleting the file";
+				}
+
+				target->verbose("Segment %" UQUADFORMAT " (%u bytes) is replicated in %s, %s",
+								sequence, totalLength, interval.c_str(), extra.c_str());
+
+				if (!oldest_sequence)
+					segment->remove();
 
 				if (org_oldest_sequence && oldest_sequence != org_oldest_sequence)
 				{
@@ -852,31 +912,17 @@ namespace
 						do
 						{
 							LogSegment* const segment = queue[pos++];
+							const FB_UINT64 sequence = segment->header.hdr_sequence;
 
-							if (segment->header.hdr_sequence >= threshold)
+							if (sequence >= threshold)
 								break;
 
-							target->verbose("Deleting file (%s) as already replicated",
-											segment->filename.c_str());
+							target->verbose("Deleting segment %" UQUADFORMAT " as no longer needed", sequence);
 
 							segment->remove();
 						} while (pos < queue.getCount());
 					}
 				}
-
-				if (oldest_sequence)
-				{
-					target->verbose("Preserving file (%s) due to uncommitted transactions",
-									segment->filename.c_str());
-				}
-				else
-				{
-					target->verbose("Deleting file (%s) as already replicated",
-									segment->filename.c_str());
-				}
-
-				if (!oldest_sequence)
-					segment->remove();
 
 				ret = PROCESS_CONTINUE;
 			}
@@ -901,6 +947,9 @@ namespace
 
 			if (message.find("Replication") == string::npos)
 				target->logError(message);
+
+			target->verbose("Suspending for %u seconds",
+							target->getConfig()->applyErrorTimeout);
 
 			ret = PROCESS_ERROR;
 		}
@@ -936,8 +985,6 @@ namespace
 			{
 				const ULONG timeout =
 					(ret == PROCESS_SUSPEND) ? config->applyIdleTimeout : config->applyErrorTimeout;
-
-				target->verbose("Going to sleep for %u seconds", timeout);
 
 				Thread::sleep(timeout * 1000);
 			}

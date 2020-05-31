@@ -260,6 +260,9 @@ Jrd::Attachment::Attachment(MemoryPool* pool, Database* dbb)
 
 Jrd::Attachment::~Attachment()
 {
+	if (att_idle_timer)
+		att_idle_timer->stop();
+
 	delete att_trace_manager;
 
 	for (unsigned n = 0; n < att_batches.getCount(); ++n)
@@ -567,6 +570,23 @@ void Jrd::Attachment::mergeStats()
 }
 
 
+bool Attachment::hasActiveRequests() const
+{
+	for (const jrd_tra* transaction = att_transactions;
+		transaction; transaction = transaction->tra_next)
+	{
+		for (const jrd_req* request = transaction->tra_requests;
+			request; request = request->req_tra_next)
+		{
+			if (request->req_transaction && (request->req_flags & req_active))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+
 // Find an inactive incarnation of a system request. If necessary, clone it.
 jrd_req* Jrd::Attachment::findSystemRequest(thread_db* tdbb, USHORT id, USHORT which)
 {
@@ -624,7 +644,7 @@ void Jrd::Attachment::initLocks(thread_db* tdbb)
 	lock->setKey(att_attachment_id);
 	LCK_lock(tdbb, lock, LCK_EX, LCK_WAIT);
 
-	// Unless we're a system attachment, allocate the cancellation lock
+	// Unless we're a system attachment, allocate cancellation and replication locks
 
 	if (!(att_flags & ATT_system))
 	{
@@ -632,6 +652,10 @@ void Jrd::Attachment::initLocks(thread_db* tdbb)
 			Lock(tdbb, sizeof(AttNumber), LCK_cancel, this, blockingAstCancel);
 		att_cancel_lock = lock;
 		lock->setKey(att_attachment_id);
+
+		lock = FB_NEW_RPT(*att_pool, 0)
+			Lock(tdbb, 0, LCK_repl_tables, this, blockingAstReplSet);
+		att_repl_lock = lock;
 	}
 }
 
@@ -745,6 +769,9 @@ void Jrd::Attachment::releaseLocks(thread_db* tdbb)
 
 	if (att_temp_pg_lock)
 		LCK_release(tdbb, att_temp_pg_lock);
+
+	if (att_repl_lock)
+		LCK_release(tdbb, att_repl_lock);
 
 	// And release the system requests
 
@@ -937,6 +964,19 @@ void StableAttachmentPart::manualAsyncUnlock(ULONG& flags)
 	}
 }
 
+void StableAttachmentPart::onIdleTimer(TimerImpl*)
+{
+	// Ensure attachment is still alive and still idle
+
+	MutexEnsureUnlock guard(*this->getMutex(), FB_FUNCTION);
+	if (!guard.tryEnter())
+		return;
+
+	Attachment* att = this->getHandle();
+	att->signalShutdown(isc_att_shut_idle);
+	JRD_shutdown_attachment(att);
+}
+
 JAttachment* Attachment::getInterface() throw()
 {
 	return att_stable->getInterface();
@@ -954,7 +994,7 @@ unsigned int Attachment::getActualIdleTimeout() const
 void Attachment::setupIdleTimer(bool clear)
 {
 	unsigned int timeout = clear ? 0 : getActualIdleTimeout();
-	if (!timeout)
+	if (!timeout || hasActiveRequests())
 	{
 		if (att_idle_timer)
 			att_idle_timer->reset(0);
@@ -962,26 +1002,13 @@ void Attachment::setupIdleTimer(bool clear)
 	else
 	{
 		if (!att_idle_timer)
-			att_idle_timer = FB_NEW IdleTimer(getInterface());
+		{
+			att_idle_timer = FB_NEW IdleTimer(getStable());
+			att_idle_timer->setOnTimer(&StableAttachmentPart::onIdleTimer);
+		}
 
 		att_idle_timer->reset(timeout);
 	}
-}
-
-bool Attachment::getIdleTimerTimestamp(ISC_TIMESTAMP_TZ& ts) const
-{
-	if (!att_idle_timer)
-		return false;
-
-	SINT64 value = att_idle_timer->getExpiryTime();
-	if (!value)
-		return false;
-
-	ts.utc_timestamp.timestamp_date = value / TimeStamp::ISC_TICKS_PER_DAY;
-	ts.utc_timestamp.timestamp_time = value % TimeStamp::ISC_TICKS_PER_DAY;
-	ts.time_zone = TimeZoneUtil::GMT_ZONE;
-
-	return true;
 }
 
 UserId* Attachment::getUserId(const MetaName& userName)
@@ -1000,90 +1027,55 @@ UserId* Attachment::getUserId(const MetaName& userName)
 	return result;
 }
 
-/// Attachment::IdleTimer
-
-void Attachment::IdleTimer::handler()
+void Attachment::checkReplSetLock(thread_db* tdbb)
 {
-	m_fireTime = 0;
-	if (!m_expTime)	// Timer was reset to zero, do nothing
-		return;
-
-	// Ensure attachment is still alive and idle
-
-	StableAttachmentPart* stable = m_attachment->getStable();
-	if (!stable)
-		return;
-
-	MutexEnsureUnlock guard(*stable->getMutex(), FB_FUNCTION);
-	if (!guard.tryEnter())
-		return;
-
-	if (!m_expTime)
-		return;
-
-	// If timer was reset to fire later, restart ITimer
-
-	const ISC_TIMESTAMP currentTimeGmt = TimeZoneUtil::getCurrentGmtTimeStamp().utc_timestamp;
-	const SINT64 curTime = currentTimeGmt.timestamp_date * TimeStamp::ISC_TICKS_PER_DAY +
-		(SINT64) currentTimeGmt.timestamp_time;
-
-	if (curTime + ISC_TIME_SECONDS_PRECISION < m_expTime)
+	if (att_flags & ATT_repl_reset)
 	{
-		reset((m_expTime - curTime) / ISC_TIME_SECONDS_PRECISION);
-		return;
+		fb_assert(att_repl_lock->lck_logical == LCK_none);
+		LCK_lock(tdbb, att_repl_lock, LCK_SR, LCK_WAIT);
+		att_flags &= ~ATT_repl_reset;
 	}
-
-	Attachment* att = stable->getHandle();
-	att->signalShutdown(isc_att_shut_idle);
-	JRD_shutdown_attachment(att);
 }
 
-int Attachment::IdleTimer::release()
+void Attachment::invalidateReplSet(thread_db* tdbb, bool broadcast)
 {
-	if (--refCounter == 0)
+	att_flags |= ATT_repl_reset;
+
+	if (att_relations)
 	{
-		delete this;
-		return 0;
+		for (auto relation : *att_relations)
+		{
+			if (relation)
+				relation->rel_repl_state.invalidate();
+		}
 	}
 
-	return 1;
+	if (broadcast)
+	{
+		// Signal other attachments about the changed state
+		if (att_repl_lock->lck_logical == LCK_none)
+			LCK_lock(tdbb, att_repl_lock, LCK_EX, LCK_WAIT);
+		else
+			LCK_convert(tdbb, att_repl_lock, LCK_EX, LCK_WAIT);
+	}
+
+	LCK_release(tdbb, att_repl_lock);
 }
 
-void Attachment::IdleTimer::reset(unsigned int timeout)
+int Attachment::blockingAstReplSet(void* ast_object)
 {
-	// Start timer if necessary. If timer was already started, don't restart
-	// (or stop) it - handler() will take care about it.
-	// Take into account that timeout is in seconds while m_expTime is in ISC ticks
-	// and ITimerControl works with microseconds.
+	Attachment* const attachment = static_cast<Attachment*>(ast_object);
 
-	if (!timeout)
+	try
 	{
-		m_expTime = 0;
-		return;
+		Database* const dbb = attachment->att_database;
+
+		AsyncContextHolder tdbb(dbb, FB_FUNCTION, attachment->att_repl_lock);
+
+		attachment->invalidateReplSet(tdbb, false);
 	}
+	catch (const Exception&)
+	{} // no-op
 
-	const ISC_TIMESTAMP currentTimeGmt = TimeZoneUtil::getCurrentGmtTimeStamp().utc_timestamp;
-	const SINT64 curTime = currentTimeGmt.timestamp_date * TimeStamp::ISC_TICKS_PER_DAY +
-		(SINT64) currentTimeGmt.timestamp_time;
-
-	m_expTime = curTime + timeout * ISC_TIME_SECONDS_PRECISION;
-
-	FbLocalStatus s;
-	ITimerControl* timerCtrl = Firebird::TimerInterfacePtr();
-
-	if (m_fireTime)
-	{
-		if (m_fireTime <= m_expTime)
-			return;
-
-		timerCtrl->stop(&s, this);
-		check(&s);
-		m_fireTime = 0;
-	}
-
-	// Convert ISC ticks into microseconds
-	timerCtrl->start(&s, this, (m_expTime - curTime) * (1000 * 1000 / ISC_TIME_SECONDS_PRECISION));
-	check(&s);
-	m_fireTime = m_expTime;
+	return 0;
 }
-

@@ -77,8 +77,7 @@ class InversionNode;
 class PlanNode;
 class SortNode;
 
-double OPT_getRelationCardinality(thread_db*, jrd_rel*, const Format*);
-Firebird::string OPT_make_alias(thread_db*, const CompilerScratch*, const CompilerScratch::csb_repeat*);
+Firebird::string OPT_make_alias(const CompilerScratch*, StreamType stream);
 
 enum segmentScanType {
 	segmentScanNone,
@@ -148,6 +147,7 @@ public:
 	bool			navigated;
 
 	Firebird::Array<BoolExprNode*> matches;
+	Firebird::Array<DbKeyRangeNode*> dbkeyRanges;
 	SortedStreamList dependentFromStreams;
 };
 

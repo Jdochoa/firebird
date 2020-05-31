@@ -7364,6 +7364,44 @@ void RelationNode::stuffTriggerFiringCondition(const Constraint& constraint, Blr
 }
 
 
+void RelationNode::addToPublication(thread_db* tdbb,
+									jrd_tra* transaction,
+									const MetaName& tableName,
+									const MetaName& pubName)
+{
+	AutoCacheRequest request(tdbb, drq_s_pub_tab, DYN_REQUESTS);
+
+	STORE(REQUEST_HANDLE request TRANSACTION_HANDLE transaction)
+		PTAB IN RDB$PUBLICATION_TABLES
+	{
+		strcpy(PTAB.RDB$PUBLICATION_NAME, pubName.c_str());
+		PTAB.RDB$PUBLICATION_NAME.NULL = FALSE;
+
+		strcpy(PTAB.RDB$TABLE_NAME, tableName.c_str());
+		PTAB.RDB$TABLE_NAME.NULL = FALSE;
+	}
+	END_STORE
+}
+
+
+void RelationNode::dropFromPublication(thread_db* tdbb,
+									   jrd_tra* transaction,
+									   const MetaName& tableName,
+									   const MetaName& pubName)
+{
+	AutoCacheRequest request(tdbb, drq_e_pub_tab, DYN_REQUESTS);
+
+	FOR(REQUEST_HANDLE request TRANSACTION_HANDLE transaction)
+		PTAB IN RDB$PUBLICATION_TABLES
+		WITH PTAB.RDB$PUBLICATION_NAME EQ pubName.c_str()
+			AND PTAB.RDB$TABLE_NAME EQ tableName.c_str()
+	{
+		ERASE PTAB;
+	}
+	END_FOR
+}
+
+
 //----------------------
 
 
@@ -7441,6 +7479,31 @@ void CreateRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScrat
 		}
 	}
 	END_STORE
+
+	bool replicationEnabled;
+
+	if (replicationState.specified)
+		replicationEnabled = replicationState.value;
+	else
+	{
+		// Apply the default replication state to the table being created
+
+		AutoCacheRequest request2(tdbb, drq_l_pub_mode, DYN_REQUESTS);
+
+		FOR(REQUEST_HANDLE request2 TRANSACTION_HANDLE transaction)
+			PUB IN RDB$PUBLICATIONS
+			WITH PUB.RDB$PUBLICATION_NAME EQ DEFAULT_PUBLICATION
+		{
+			replicationEnabled = (PUB.RDB$AUTO_ENABLE != 0);
+		}
+		END_FOR
+	}
+
+	if (replicationEnabled)
+	{
+		// Add table to the default publication
+		RelationNode::addToPublication(tdbb, transaction, name, DEFAULT_PUBLICATION);
+	}
 
 	storePrivileges(tdbb, transaction, name, obj_relation, ALL_PRIVILEGES);
 
@@ -7769,9 +7832,6 @@ void AlterRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratc
 					{
 						MODIFY REL
 						{
-							const Nullable<bool> ssDefiner =
-								static_cast<const AlterSqlSecurityClause*>(i->getObject())->ssDefiner;
-
 							if (ssDefiner.specified)
 							{
 								REL.RDB$SQL_SECURITY.NULL = FALSE;
@@ -7783,6 +7843,39 @@ void AlterRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratc
 						END_MODIFY
 					}
 					END_FOR
+
+					break;
+				}
+
+				case Clause::TYPE_ALTER_PUBLICATION:
+				{
+					fb_assert(replicationState.specified);
+
+					if (replicationState.value)
+					{
+						// Add table to the publication
+
+						try
+						{
+							RelationNode::addToPublication(tdbb, transaction,
+														   name, DEFAULT_PUBLICATION);
+						}
+						catch (const status_exception& ex)
+						{
+							if (ex.value()[1] != isc_unique_key_violation)
+								throw;
+
+							// Ignore duplicated records
+							fb_utils::init_status(tdbb->tdbb_status_vector);
+						}
+					}
+					else
+					{
+						// Drop table from the publication
+
+						RelationNode::dropFromPublication(tdbb, transaction,
+														  name, DEFAULT_PUBLICATION);
+					}
 
 					break;
 				}
@@ -8548,6 +8641,18 @@ void DropRelationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch
 			 PRIV.RDB$GRANTOR NOT MISSING
 	{
 		ERASE PRIV;
+	}
+	END_FOR
+
+	// Drop table from all publications
+
+	request.reset(tdbb, drq_e_pub_tab_all, DYN_REQUESTS);
+
+	FOR(REQUEST_HANDLE request TRANSACTION_HANDLE transaction)
+		PTAB IN RDB$PUBLICATION_TABLES
+		WITH PTAB.RDB$TABLE_NAME EQ name.c_str()
+	{
+		ERASE PTAB;
 	}
 	END_FOR
 
@@ -11454,8 +11559,9 @@ void GrantRevokeNode::grantRevoke(thread_db* tdbb, jrd_tra* transaction, const G
 	const MetaName objName(object ? object->second : "");
 	bool crdb = false;
 
-	char privileges[16];
+	AutoPtr<char, ArrayDelete> privileges(new char[MAX(strlen(ALL_PRIVILEGES), strlen(privs ? privs : "")) + 1]);
 	strcpy(privileges, privs ? privs : "");
+
 	if (strcmp(privileges, "A") == 0)
 		strcpy(privileges, ALL_PRIVILEGES);
 
@@ -12386,9 +12492,10 @@ void AlterDatabaseNode::checkPermission(thread_db* tdbb, jrd_tra* transaction)
 
 void AlterDatabaseNode::checkClauses(thread_db* tdbb)
 {
+	// Raises msg 298: Incompatible ALTER DATABASE clauses: '@1' and '@2'
+
 	if (clauses & CLAUSE_END_BACKUP)
 	{
-		// msg 298: Incompatible ALTER DATABASE clauses: '@1' and '@2'
 		if (clauses & CLAUSE_BEGIN_BACKUP)
 			(Arg::PrivateDyn(298) << Arg::Str("BEGIN BACKUP") << Arg::Str("END BACKUP")).raise();
 
@@ -12400,10 +12507,13 @@ void AlterDatabaseNode::checkClauses(thread_db* tdbb)
 	}
 
 	if ((clauses & CLAUSE_DROP_DIFFERENCE) && differenceFile.hasData())
-	{
-		// msg 298: Incompatible ALTER DATABASE clauses: '@1' and '@2'
 		(Arg::PrivateDyn(298) << Arg::Str("ADD DIFFERENCE FILE") << Arg::Str("DROP DIFFERENCE FILE")).raise();
-	}
+
+	if ((clauses & CLAUSE_ENABLE_PUB) && (clauses & CLAUSE_DISABLE_PUB))
+		(Arg::PrivateDyn(298) << Arg::Str("ENABLE PUBLICATION") << Arg::Str("DISABLE PUBLICATION")).raise();
+
+	if ((clauses & CLAUSE_PUB_ADD_TABLE) && (clauses & CLAUSE_PUB_DROP_TABLE))
+		(Arg::PrivateDyn(298) << Arg::Str("ADD TABLE TO PUBLICATION") << Arg::Str("DROP TABLE FROM PUBLICATION")).raise();
 }
 
 void AlterDatabaseNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch,
@@ -12426,12 +12536,11 @@ void AlterDatabaseNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratc
 			delete lock;
 
 			// msg 297: Concurrent ALTER DATABASE is not supported
-			Arg::PrivateDyn status(297);
+			if (!conflict_trans)
+				Arg::PrivateDyn(297).raise();
 
-			if (conflict_trans)
-				status << Arg::Gds(isc_concurrent_transaction) << Arg::Num(conflict_trans);
-
-			status_exception::raise(status);
+			// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
+			(Arg::PrivateDyn(297) << Arg::Gds(isc_concurrent_transaction) << Arg::Int64(conflict_trans)).raise();
 		}
 	}
 
@@ -12440,6 +12549,110 @@ void AlterDatabaseNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratc
 
 	if (clauses & CLAUSE_DROP_DIFFERENCE)
 		changeBackupMode(tdbb, transaction, CLAUSE_DROP_DIFFERENCE);
+
+	if (clauses & (CLAUSE_ENABLE_PUB | CLAUSE_DISABLE_PUB))
+	{
+		AutoCacheRequest request(tdbb, drq_m_pub_state, DYN_REQUESTS);
+
+		FOR(REQUEST_HANDLE request TRANSACTION_HANDLE transaction)
+			PUB IN RDB$PUBLICATIONS
+			WITH PUB.RDB$PUBLICATION_NAME EQ DEFAULT_PUBLICATION
+		{
+			MODIFY PUB
+				PUB.RDB$ACTIVE_FLAG.NULL = FALSE;
+				PUB.RDB$ACTIVE_FLAG = (clauses & CLAUSE_ENABLE_PUB) ? 1 : 0;
+			END_MODIFY
+		}
+		END_FOR
+	}
+
+	if (clauses & (CLAUSE_PUB_ADD_TABLE | CLAUSE_PUB_DROP_TABLE))
+	{
+		if (pubTables.isEmpty())
+		{
+			AutoCacheRequest request(tdbb, drq_l_pub_all_rels, DYN_REQUESTS);
+
+			FOR(REQUEST_HANDLE request TRANSACTION_HANDLE transaction)
+				REL IN RDB$RELATIONS
+				WITH REL.RDB$SYSTEM_FLAG EQ 0
+					AND REL.RDB$VIEW_BLR MISSING
+			{
+				const rel_t relType =
+					relationType(REL.RDB$RELATION_TYPE.NULL, REL.RDB$RELATION_TYPE);
+
+				if (relType == rel_persistent)
+					pubTables.add(REL.RDB$RELATION_NAME);
+			}
+			END_FOR
+
+			AutoCacheRequest request2(tdbb, drq_m_pub_mode, DYN_REQUESTS);
+
+			FOR(REQUEST_HANDLE request2 TRANSACTION_HANDLE transaction)
+				PUB IN RDB$PUBLICATIONS
+				WITH PUB.RDB$PUBLICATION_NAME EQ DEFAULT_PUBLICATION
+			{
+				MODIFY PUB
+					PUB.RDB$AUTO_ENABLE = (clauses & CLAUSE_PUB_ADD_TABLE) ? 1 : 0;
+					PUB.RDB$AUTO_ENABLE.NULL = FALSE;
+				END_MODIFY
+			}
+			END_FOR
+		}
+		else
+		{
+			AutoCacheRequest request(tdbb, drq_l_pub_rel_name, DYN_REQUESTS);
+
+			for (const MetaName* iter = pubTables.begin(); iter != pubTables.end(); ++iter)
+			{
+				const MetaName& tableName = *iter;
+				bool found = false;
+
+				FOR(REQUEST_HANDLE request TRANSACTION_HANDLE transaction)
+					REL IN RDB$RELATIONS
+					WITH REL.RDB$SYSTEM_FLAG EQ 0
+						AND REL.RDB$VIEW_BLR MISSING
+						AND REL.RDB$RELATION_NAME EQ tableName.c_str()
+				{
+					const rel_t relType =
+						relationType(REL.RDB$RELATION_TYPE.NULL, REL.RDB$RELATION_TYPE);
+
+					if (relType == rel_persistent)
+						found = true;
+				}
+				END_FOR
+
+				if (!found)
+					status_exception::raise(Arg::Gds(isc_dyn_table_not_found) << tableName);
+			}
+		}
+
+		for (const MetaName* iter = pubTables.begin(); iter != pubTables.end(); ++iter)
+		{
+			const MetaName& tableName = *iter;
+
+			if (clauses & CLAUSE_PUB_ADD_TABLE)
+			{
+				try
+				{
+					RelationNode::addToPublication(tdbb, transaction,
+												   tableName, DEFAULT_PUBLICATION);
+				}
+				catch (const status_exception& ex)
+				{
+					if (ex.value()[1] != isc_unique_key_violation)
+						throw;
+
+					// Ignore duplicated records
+					fb_utils::init_status(tdbb->tdbb_status_vector);
+				}
+			}
+			else
+			{
+				RelationNode::dropFromPublication(tdbb, transaction,
+												  tableName, DEFAULT_PUBLICATION);
+			}
+		}
+	}
 
 	SLONG dbAlloc = PageSpace::maxAlloc(tdbb->getDatabase());
 	SLONG start = create ? createLength + 1 : 0;

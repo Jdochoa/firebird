@@ -286,6 +286,16 @@ private:
 		clause = value;
 	}
 
+	template <typename T>
+	void setClause(BaseNullable<T>& clause, const char* duplicateMsg, const BaseNullable<T>& value)
+	{
+		if (value.specified)
+		{
+			checkDuplicateClause(clause, duplicateMsg);
+			clause = value.value;
+		}
+	}
+
 	template <typename T1, typename T2>
 	void setClause(NestConst<T1>& clause, const char* duplicateMsg, const T2& value)
 	{
@@ -343,6 +353,8 @@ private:
 	{
 		return clause.hasData();
 	}
+
+	void checkTimeDialect();
 
 // start - defined in btyacc_fb.ske
 private:

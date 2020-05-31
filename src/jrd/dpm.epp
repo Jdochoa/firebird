@@ -1366,8 +1366,14 @@ SINT64 DPM_gen_id(thread_db* tdbb, SLONG generator, bool initialize, SINT64 val)
 	window.win_page = (*vector)[sequence];
 	window.win_flags = 0;
 
+	// As a special exception that allows physical backups for read-only replicas,
+	// we allow to modify the RDB$BACKUP_HISTORY generator
+	const int BACKUP_HISTORY_GENERATOR = 9;
+
 	const bool isReadOnly = dbb->readOnly() ||
-		(dbb->isReplica(REPLICA_READ_ONLY) && !(tdbb->tdbb_flags & TDBB_replicator));
+		(dbb->isReplica(REPLICA_READ_ONLY) &&
+		!(tdbb->tdbb_flags & TDBB_replicator) &&
+		generator != BACKUP_HISTORY_GENERATOR);
 
 	const SSHORT lock_mode = isReadOnly ? LCK_read : LCK_write;
 	generator_page* const page = (generator_page*) CCH_FETCH(tdbb, &window, lock_mode, pag_ids);

@@ -275,6 +275,7 @@ public:
 	SINT64 req_fetch_rowcount;	// Total number of rows returned by this request
 	jrd_req* req_proc_caller;	// Procedure's caller request
 	const ValueListNode* req_proc_inputs;	// and its node with input parameters
+	TraNumber req_conflict_txn;	// Transaction number for update conflict in read consistency mode
 
 	ULONG req_src_line;
 	ULONG req_src_column;
@@ -397,6 +398,8 @@ const ULONG req_continue_loop	= 0x100L;		// PSQL continue statement
 const ULONG req_proc_fetch		= 0x200L;		// Fetch from procedure in progress
 const ULONG req_same_tx_upd		= 0x400L;		// record was updated by same transaction
 const ULONG req_reserved		= 0x800L;		// Request reserved for client
+const ULONG req_update_conflict	= 0x1000L;		// We need to restart request due to update conflict
+const ULONG req_restart_ready	= 0x2000L;		// Request is ready to restat in case of update conflict
 
 
 // Index lock block

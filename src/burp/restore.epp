@@ -140,7 +140,9 @@ SLONG	get_int32(BurpGlobals* tdgbl);
 SINT64  get_int64(BurpGlobals* tdgbl);
 bool	get_package(BurpGlobals* tdgbl);
 bool	get_procedure(BurpGlobals* tdgbl);
-bool	get_procedure_prm (BurpGlobals* tdgbl, GDS_NAME, GDS_NAME);
+bool	get_procedure_prm(BurpGlobals* tdgbl, GDS_NAME, GDS_NAME);
+bool	get_publication(BurpGlobals* tdgbl);
+bool	get_pub_table(BurpGlobals* tdgbl);
 bool	get_ref_constraint(BurpGlobals* tdgbl);
 bool	get_rel_constraint(BurpGlobals* tdgbl);
 bool	get_relation(BurpGlobals* tdgbl);
@@ -5157,12 +5159,12 @@ bool get_function(BurpGlobals* tdgbl)
 
 				case att_function_description:
 					X.RDB$DESCRIPTION.NULL = FALSE;
-					get_misc_blob (tdgbl, X.RDB$DESCRIPTION, false);
+					get_misc_blob (tdgbl, X.RDB$DESCRIPTION, true);
 					break;
 
 				case att_function_description2:
 					X.RDB$DESCRIPTION.NULL = FALSE;
-					get_source_blob (tdgbl, X.RDB$DESCRIPTION, false);
+					get_source_blob (tdgbl, X.RDB$DESCRIPTION, true);
 					break;
 
 				case att_function_module_name:
@@ -5513,7 +5515,7 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 				case att_functionarg_default_source:
 					if (tdgbl->RESTORE_format >= 10)
 					{
-						get_source_blob(tdgbl, X.RDB$DEFAULT_SOURCE, false);
+						get_source_blob(tdgbl, X.RDB$DEFAULT_SOURCE, true);
 						X.RDB$DEFAULT_SOURCE.NULL = FALSE;
 					}
 					else
@@ -5573,7 +5575,7 @@ void get_function_arg(BurpGlobals* tdgbl, bool skip_arguments)
 				case att_functionarg_description:
 					if (tdgbl->RESTORE_format >= 10)
 					{
-						get_source_blob(tdgbl, X.RDB$DESCRIPTION, false);
+						get_source_blob(tdgbl, X.RDB$DESCRIPTION, true);
 						X.RDB$DESCRIPTION.NULL = FALSE;
 					}
 					else
@@ -8003,6 +8005,182 @@ bool get_procedure_prm (BurpGlobals* tdgbl, GDS_NAME package_name, GDS_NAME proc
 	return true;
 }
 
+bool get_publication(BurpGlobals* tdgbl)
+{
+/**************************************
+ *
+ *	g e t _ p u b l i c a t i o n
+ *
+ **************************************
+ *
+ * Functional description
+ *	Reconstruct a publication.
+ *
+ **************************************/
+	att_type attribute;
+	TEXT temp[GDS_NAME_LEN];
+	SSHORT len;
+	scan_attr_t scan_next_attr;
+
+	if (tdgbl->runtimeODS >= DB_VERSION_DDL13)
+	{
+		STORE (REQUEST_HANDLE tdgbl->handles_get_pub_req_handle1)
+			X IN RDB$PUBLICATIONS
+
+			X.RDB$PUBLICATION_NAME.NULL = TRUE;
+			X.RDB$OWNER_NAME.NULL = TRUE;
+
+			X.RDB$SYSTEM_FLAG = 0;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+			X.RDB$ACTIVE_FLAG = 0;
+			X.RDB$ACTIVE_FLAG.NULL = FALSE;
+
+			X.RDB$AUTO_ENABLE = 0;
+			X.RDB$AUTO_ENABLE.NULL = FALSE;
+
+			skip_init(&scan_next_attr);
+			while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
+			{
+				switch (attribute)
+				{
+				case att_pub_name:
+					GET_TEXT(X.RDB$PUBLICATION_NAME);
+					X.RDB$PUBLICATION_NAME.NULL = FALSE;
+					BURP_verbose(399, X.RDB$PUBLICATION_NAME);
+					// msg 399 restoring publication %s
+					break;
+
+				case att_pub_owner_name:
+					GET_TEXT(X.RDB$OWNER_NAME);
+					X.RDB$OWNER_NAME.NULL = FALSE;
+					break;
+
+				case att_pub_active_flag:
+					X.RDB$ACTIVE_FLAG = (USHORT) get_int32(tdgbl);
+					break;
+
+				case att_pub_auto_enable:
+					X.RDB$AUTO_ENABLE = (USHORT) get_int32(tdgbl);
+					break;
+
+				default:
+					bad_attribute(scan_next_attr, attribute, 400);
+					// msg 400 publication
+					break;
+				}
+			}
+		END_STORE;
+		ON_ERROR
+			general_on_error ();
+		END_ERROR;
+	}
+	else
+	{
+		// Skip attributes if the target ODS does not support publications
+		skip_init(&scan_next_attr);
+		while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
+		{
+			switch (attribute)
+			{
+			case att_pub_name:
+			case att_pub_owner_name:
+				eat_text(tdgbl);
+				break;
+
+			case att_pub_active_flag:
+			case att_pub_auto_enable:
+				get_int32(tdgbl);
+				break;
+
+			default:
+				// msg 400 publication
+				bad_attribute(scan_next_attr, attribute, 400);
+				break;
+			}
+		}
+	}
+
+	return true;
+}
+
+bool get_pub_table(BurpGlobals* tdgbl)
+{
+/**************************************
+ *
+ *	g e t _ p u b _ t a b l e
+ *
+ **************************************
+ *
+ * Functional description
+ *	Reconstruct a publication table.
+ *
+ **************************************/
+	att_type attribute;
+	TEXT temp[GDS_NAME_LEN];
+	SSHORT len;
+	scan_attr_t scan_next_attr;
+
+	if (tdgbl->runtimeODS >= DB_VERSION_DDL13)
+	{
+		STORE (REQUEST_HANDLE tdgbl->handles_get_pub_tab_req_handle1)
+			X IN RDB$PUBLICATION_TABLES
+
+			X.RDB$PUBLICATION_NAME.NULL = TRUE;
+			X.RDB$TABLE_NAME.NULL = TRUE;
+
+			skip_init(&scan_next_attr);
+			while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
+			{
+				switch (attribute)
+				{
+				case att_ptab_pub_name:
+					GET_TEXT(X.RDB$PUBLICATION_NAME);
+					X.RDB$PUBLICATION_NAME.NULL = FALSE;
+					break;
+
+				case att_ptab_table_name:
+					GET_TEXT(X.RDB$TABLE_NAME);
+					X.RDB$TABLE_NAME.NULL = FALSE;
+					BURP_verbose(401, X.RDB$TABLE_NAME);
+					// msg 401 restoring publication for table %s
+					break;
+
+				default:
+					bad_attribute(scan_next_attr, attribute, 402);
+					// msg 402 publication for table
+					break;
+				}
+			}
+		END_STORE;
+		ON_ERROR
+			general_on_error ();
+		END_ERROR;
+	}
+	else
+	{
+		// Skip attributes if the target ODS does not support publications
+		skip_init(&scan_next_attr);
+		while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
+		{
+			switch (attribute)
+			{
+			case att_ptab_pub_name:
+			case att_ptab_table_name:
+				eat_text(tdgbl);
+				break;
+
+			default:
+				// msg 402 publication for table
+				bad_attribute(scan_next_attr, attribute, 402);
+				break;
+			}
+		}
+	}
+
+	return true;
+}
+
 bool get_ref_constraint(BurpGlobals* tdgbl)
 {
 /**************************************
@@ -8742,6 +8920,9 @@ bool get_mapping(BurpGlobals* tdgbl)
 			M.RDB$MAP_TO.NULL = TRUE;
 			M.RDB$DESCRIPTION.NULL = TRUE;
 
+			M.RDB$SYSTEM_FLAG.NULL = FALSE;
+			M.RDB$SYSTEM_FLAG = 0;
+
 			skip_init(&scan_next_attr);
 			while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
 			{
@@ -8840,8 +9021,18 @@ bool get_mapping(BurpGlobals* tdgbl)
 			general_on_error ();
 		END_ERROR;
 	}
-	else if (tdgbl->runtimeODS >= DB_VERSION_DDL11_1)
+	else
 	{
+		int match = 0;
+		const unsigned MATCH_FROM = 0x01;
+		const unsigned MATCH_FROM_TYPE = 0x02;
+		const unsigned MATCH_USING = 0x04;
+		const unsigned MATCH_PLUGIN = 0x08;
+		const unsigned MATCH_TO_TYPE = 0x10;
+		const unsigned MATCH_TO = 0x20;
+		const unsigned MATCH_ALL = 0x3f;
+		Firebird::NoCaseString txt;
+
 		skip_init(&scan_next_attr);
 		while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
 		{
@@ -8853,7 +9044,8 @@ bool get_mapping(BurpGlobals* tdgbl)
 				break;
 
 			case att_map_to_type:
-				get_int32(tdgbl);
+				if (get_int32(tdgbl) == 1)
+					match |= MATCH_TO_TYPE;
 				break;
 
 			case att_map_name:
@@ -8863,7 +9055,37 @@ bool get_mapping(BurpGlobals* tdgbl)
 			case att_map_from_type:
 			case att_map_from:
 			case att_map_to:
-				GET_TEXT(temp);
+				l = GET_TEXT(temp);
+				txt.assign(temp, l);
+
+				switch(attribute)
+				{
+				case att_map_using:
+					if (txt == "P")
+						match |= MATCH_USING;
+					break;
+
+				case att_map_plugin:
+					if (txt == "Win_Sspi")
+						match |= MATCH_PLUGIN;
+					break;
+
+				case att_map_from_type:
+					if (txt == FB_PREDEFINED_GROUP)
+						match |= MATCH_FROM_TYPE;
+					break;
+
+				case att_map_from:
+					if (txt == FB_DOMAIN_ANY_RID_ADMINS)
+						match |= MATCH_FROM;
+					break;
+
+				case att_map_to:
+					if (txt == ADMIN_ROLE)
+						match |= MATCH_TO;
+					break;
+
+				}
 				break;
 
 			case att_map_description:
@@ -8887,6 +9109,9 @@ bool get_mapping(BurpGlobals* tdgbl)
 			BURP_verbose(301);
 			// msg 301, restoring names mapping
 		}
+
+		if (match == MATCH_ALL)
+			role = ADMIN_ROLE;
 
 		if (role != ADMIN_ROLE)
 		{
@@ -8929,46 +9154,57 @@ bool get_db_creator(BurpGlobals* tdgbl)
  **************************************/
 	att_type		attribute;
 	scan_attr_t		scan_next_attr;
-	TEXT			temp[GDS_NAME_LEN];
-	SSHORT			l;
-	Firebird::string role;
+	TEXT			usr[GDS_NAME_LEN];
+	SSHORT			uType;
+	bool			userSet, typeSet;
+
+	userSet = typeSet = false;
+
+	skip_init(&scan_next_attr);
+	while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
+	{
+		switch (attribute)
+		{
+		case att_dbc_user:
+			userSet = true;
+			GET_TEXT(usr);
+			break;
+
+		case att_dbc_type:
+			typeSet = true;
+			uType = (SSHORT) get_int32(tdgbl);
+			break;
+
+		default:
+			// msg 395 database creator
+			bad_attribute(scan_next_attr, attribute, 395);
+			break;
+		}
+	}
 
 	if (tdgbl->runtimeODS >= DB_VERSION_DDL12)
 	{
-		STORE (REQUEST_HANDLE tdgbl->handles_db_creators_req_handle1)
+		if (tdgbl->firstDbc)
+		{
+			tdgbl->firstDbc = false;
+			BURP_verbose(394);
+			// msg 394 restoring database creators
+		}
+
+		STORE (REQUEST_HANDLE tdgbl->handles_get_db_creators_req_handle1)
 			C IN RDB$DB_CREATORS
 
-			C.RDB$USER.NULL = TRUE;
-			C.RDB$USER_TYPE.NULL = TRUE;
+			BURP_verbose (393, usr);
+			if (strlen(usr) > sizeof(C.RDB$USER))
+				BURP_error_redirect(NULL, 46);
 
-			skip_init(&scan_next_attr);
-			while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
-			{
-				switch (attribute)
-				{
-				case att_dbc_user:
-					C.RDB$USER.NULL = FALSE;
-					GET_TEXT(C.RDB$USER);
-					if (tdgbl->firstDbc)
-					{
-						tdgbl->firstDbc = false;
-						BURP_verbose(394);
-						// msg 394 restoring database creators
-					}
-					BURP_verbose (393, C.RDB$USER);
-					break;
+			C.RDB$USER.NULL = userSet ? FALSE : TRUE;
+			if (userSet)
+				strncpy(C.RDB$USER, usr, sizeof(C.RDB$USER));
 
-				case att_dbc_type:
-					C.RDB$USER_TYPE.NULL = FALSE;
-					C.RDB$USER_TYPE = (USHORT) get_int32(tdgbl);
-					break;
-
-				default:
-					// msg 395 database creator
-					bad_attribute(scan_next_attr, attribute, 395);
-					break;
-				}
-			}
+			C.RDB$USER_TYPE.NULL = typeSet ? FALSE : TRUE;
+			if (typeSet)
+				C.RDB$USER_TYPE = uType;
 
 		END_STORE;
 		ON_ERROR
@@ -10122,6 +10358,12 @@ bool get_user_privilege(BurpGlobals* tdgbl)
 
 		END_STORE;
 		ON_ERROR
+			if (tdgbl->status_vector->getErrors()[1] == isc_integ_fail)
+			{
+				BURP_print_status(false, &tdgbl->status_vector);
+				tdgbl->flag_on_line = false;
+				return true;
+			}
 			general_on_error ();
 		END_ERROR;
 	}
@@ -11001,6 +11243,18 @@ bool restore(BurpGlobals* tdgbl, Firebird::IProvider* provider, const TEXT* file
 			flag = true;
 			break;
 
+		case rec_publication:
+			if (!get_publication(tdgbl))
+				return false;
+			flag = true;
+			break;
+
+		case rec_pub_table:
+			if (!get_pub_table(tdgbl))
+				return false;
+			flag = true;
+			break;
+
 		default:
 			BURP_error(43, true, SafeArg() << record);
 			// msg 43 don't recognize record type %ld
@@ -11753,7 +12007,14 @@ void fix_generator(BurpGlobals* tdgbl, const FixGenerator* g)
 	catch (const Firebird::FbException& ex)
 	{
 		fb_utils::copyStatus(&tdgbl->status_vector, ex.getStatus());
-		general_on_error ();
+
+		if (tdgbl->status_vector->getErrors()[1] == isc_dsql_error)
+		{
+			BURP_print_status(false, &tdgbl->status_vector);
+			tdgbl->flag_on_line = false;
+		}
+		else
+			general_on_error();
 	}
 }
 

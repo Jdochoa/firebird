@@ -1067,6 +1067,7 @@ public:
 	static const unsigned DFLAG_DT_IGNORE_COLUMN_CHECK	= 0x10;
 	static const unsigned DFLAG_DT_CTE_USED				= 0x20;
 	static const unsigned DFLAG_CURSOR					= 0x40;
+	static const unsigned DFLAG_LATERAL					= 0x80;
 
 	RecordSourceNode(Type aType, MemoryPool& pool)
 		: ExprNode(aType, pool),
@@ -1388,6 +1389,12 @@ public:
 		PRE_TRIG = 1,
 		POST_TRIG = 2
 	};
+
+	// Marks used by EraseNode, ModifyNode and StoreNode
+	static const unsigned MARK_POSITIONED	= 0x01;		// Erase|Modify node is positioned at explicit cursor
+	static const unsigned MARK_MERGE		= 0x02;		// node is part of MERGE statement
+	// Marks used by ForNode
+	static const unsigned MARK_FOR_UPDATE	= 0x04;		// implicit cursor used in UPDATE\DELETE\MERGE statement
 
 	struct ExeState
 	{

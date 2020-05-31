@@ -32,43 +32,22 @@ using namespace Jrd;
 using namespace Replication;
 
 
-Replicator* Replicator::create(MemoryPool& pool,
-							   const string& dbId,
-							   const PathName& database,
-							   const Guid& guid,
-							   const MetaName& user,
-							   bool cleanupTransactions)
-{
-	const auto manager = Manager::create(dbId, database, guid);
-
-	return manager ? FB_NEW_POOL(pool)
-		Replicator(pool, manager, database, guid, user, cleanupTransactions) : NULL;
-}
-
 Replicator::Replicator(MemoryPool& pool,
 					   Manager* manager,
-					   const PathName& database,
 					   const Guid& guid,
 					   const MetaName& user,
 					   bool cleanupTransactions)
 	: PermanentStorage(pool),
 	  m_manager(manager),
 	  m_config(manager->getConfig()),
-	  m_database(pool, database),
+	  m_guid(guid),
 	  m_user(user),
 	  m_transactions(pool),
 	  m_generators(pool),
 	  m_status(pool)
 {
-	memcpy(&m_guid, &guid, sizeof(Guid));
-
 	if (cleanupTransactions)
 		cleanupTransaction(0);
-}
-
-Replicator::~Replicator()
-{
-	Manager::destroy(m_manager);
 }
 
 void Replicator::flush(BatchBlock& block, FlushReason reason, ULONG flags)
@@ -77,6 +56,7 @@ void Replicator::flush(BatchBlock& block, FlushReason reason, ULONG flags)
 
 	const auto orgLength = (ULONG) block.buffer->getCount();
 	fb_assert(orgLength > sizeof(Block));
+	block.header.protocol = PROTOCOL_CURRENT_VERSION;
 	block.header.dataLength = orgLength - sizeof(Block);
 	block.header.metaLength = (ULONG) (block.metadata.getCount() * sizeof(MetaName));
 	block.header.timestamp = TimeZoneUtil::getCurrentGmtTimeStamp().utc_timestamp;
@@ -123,7 +103,7 @@ void Replicator::logError(const IStatus* status)
 		message += temp;
 	}
 
-	logOriginMessage(m_database, message, ERROR_MSG);
+	logOriginMessage(m_config->dbName, message, ERROR_MSG);
 }
 
 void Replicator::postError(const Exception& ex)
@@ -462,8 +442,9 @@ bool Replicator::storeBlob(Transaction* transaction,
 	return true;
 }
 
-bool Replicator::executeSql(Transaction* transaction,
-							const char* sql)
+bool Replicator::executeSqlIntl(Transaction* transaction,
+								unsigned charset,
+								const char* sql)
 {
 	try
 	{
@@ -471,7 +452,16 @@ bool Replicator::executeSql(Transaction* transaction,
 
 		auto& txnData = transaction->getData();
 
-		txnData.putTag(opExecuteSql);
+		if (charset == CS_UTF8)
+		{
+			txnData.putTag(opExecuteSql);
+		}
+		else
+		{
+			txnData.putTag(opExecuteSqlIntl);
+			txnData.putInt(charset);
+		}
+
 		txnData.putString(sql);
 		txnData.putMetaName(m_user);
 

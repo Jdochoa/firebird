@@ -55,6 +55,7 @@
 #include "firebird/impl/sqlda_pub.h"
 #include "../common/classes/ClumpletReader.h"
 #include "../common/StatusArg.h"
+#include "../common/TimeZoneUtil.h"
 
 #ifdef WIN_NT
 #include <direct.h>
@@ -304,6 +305,8 @@ bool readenv(const char* env_name, Firebird::PathName& env_value)
 }
 
 
+// Set environment variable.
+// If overwrite == false and variable already exist, return true.
 bool setenv(const char* name, const char* value, bool overwrite)
 {
 #ifdef WIN_NT
@@ -314,7 +317,7 @@ bool setenv(const char* name, const char* value, bool overwrite)
 		size_t envsize = 0;
 		errcode = getenv_s(&envsize, NULL, 0, name);
 		if (errcode || envsize)
-			return false;
+			return errcode ? false : true;
 	}
 
 	// In Windows, _putenv_s sets only the environment data in the CRT.
@@ -1042,7 +1045,7 @@ Firebird::PathName getPrefix(unsigned int prefType, const char* name)
 	const char* configDir[] = {
 		FB_BINDIR, FB_SBINDIR, FB_CONFDIR, FB_LIBDIR, FB_INCDIR, FB_DOCDIR, "", FB_SAMPLEDIR,
 		FB_SAMPLEDBDIR, FB_HELPDIR, FB_INTLDIR, FB_MISCDIR, FB_SECDBDIR, FB_MSGDIR, FB_LOGDIR,
-		FB_GUARDDIR, FB_PLUGDIR
+		FB_GUARDDIR, FB_PLUGDIR, FB_TZDATADIR
 	};
 
 	fb_assert(FB_NELEM(configDir) == Firebird::IConfigManager::DIR_COUNT);
@@ -1060,7 +1063,7 @@ Firebird::PathName getPrefix(unsigned int prefType, const char* name)
 		}
 	}
 
-	switch(prefType)
+	switch (prefType)
 	{
 		case Firebird::IConfigManager::DIR_BIN:
 		case Firebird::IConfigManager::DIR_SBIN:
@@ -1089,6 +1092,10 @@ Firebird::PathName getPrefix(unsigned int prefType, const char* name)
 		case Firebird::IConfigManager::DIR_PLUGINS:
 			s = "plugins";
 			break;
+
+		case Firebird::IConfigManager::DIR_TZDATA:
+			PathUtils::concatPath(s, Firebird::TimeZoneUtil::getTzDataPath(), name);
+			return s;
 
 		case Firebird::IConfigManager::DIR_INC:
 			s = "include";
@@ -1151,7 +1158,7 @@ unsigned int copyStatus(ISC_STATUS* const to, const unsigned int space,
 		{
 			break;
 		}
-		i += (from[i] == isc_arg_cstring ? 3 : 2);
+		i += nextArg(from[i]);
 		if (i > space - 1)
 		{
 			break;
@@ -1224,7 +1231,7 @@ void setIStatus(Firebird::CheckStatusWrapper* to, const ISC_STATUS* from) throw(
 				to->setWarnings(w);
 				break;
 			}
-			w += (*w == isc_arg_cstring ? 3 : 2);
+			w += nextArg(*w);
 		}
 		to->setErrors2(w - from, from);
 	}
@@ -1243,7 +1250,7 @@ unsigned int statusLength(const ISC_STATUS* const status) throw()
 		{
 			return l;
 		}
-		l += (status[l] == isc_arg_cstring ? 3 : 2);
+		l += nextArg(status[l]);
 	}
 }
 
@@ -1259,18 +1266,14 @@ bool cmpStatus(unsigned int len, const ISC_STATUS* a, const ISC_STATUS* b) throw
 		if (i == len - 1 && *op1 == isc_arg_end)
 			break;
 
-		i += (*op1 == isc_arg_cstring ? 3 : 2);
+		i += nextArg(*op1);
 		if (i > len)		// arg does not fit
 			return false;
 
 		unsigned l1, l2;
 		const char *s1, *s2;
-		switch (*op1)
+		if (isStr(*op1))
 		{
-		case isc_arg_cstring:
-		case isc_arg_string:
-		case isc_arg_interpreted:
-		case isc_arg_sql_state:
 			if (*op1 == isc_arg_cstring)
 			{
 				l1 = op1[1];
@@ -1290,13 +1293,9 @@ bool cmpStatus(unsigned int len, const ISC_STATUS* a, const ISC_STATUS* b) throw
 				return false;
 			if (memcmp(s1, s2, l1) != 0)
 				return false;
-			break;
-
-		default:
-			if (op1[1] != op2[1])
-				return false;
-			break;
 		}
+		else if (op1[1] != op2[1])
+			return false;
 	}
 
 	return true;
@@ -1314,19 +1313,15 @@ unsigned int subStatus(const ISC_STATUS* in, unsigned int cin,
 			if (*op1 != *op2)
 				goto miss;
 
-			i += (*op1 == isc_arg_cstring ? 3 : 2);
+			i += nextArg(*op1);
 			if (i > csub)		// arg does not fit
 				goto miss;
 
-			unsigned l1, l2;
-			const char *s1, *s2;
 
-			switch (*op1)
+			if (isStr(*op1))
 			{
-			case isc_arg_cstring:
-			case isc_arg_string:
-			case isc_arg_interpreted:
-			case isc_arg_sql_state:
+				unsigned l1, l2;
+				const char *s1, *s2;
 				if (*op1 == isc_arg_cstring)
 				{
 					l1 = op1[1];
@@ -1346,19 +1341,14 @@ unsigned int subStatus(const ISC_STATUS* in, unsigned int cin,
 					goto miss;
 				if (memcmp(s1, s2, l1) != 0)
 					goto miss;
-				break;
-
-			default:
-				if (op1[1] != op2[1])
-					goto miss;
-				break;
 			}
-
+			else if (op1[1] != op2[1])
+				goto miss;
 		}
 
 		return pos;
 
-miss:	pos += (in[pos] == isc_arg_cstring ? 3 : 2);
+miss:	pos += nextArg(in[pos]);
 	}
 
 	return ~0u;
@@ -1554,6 +1544,10 @@ UCHAR sqlTypeToDscType(SSHORT sqlType)
 		return dtype_sql_time_tz;
 	case SQL_TIMESTAMP_TZ:
 		return dtype_timestamp_tz;
+	case SQL_TIME_TZ_EX:
+		return dtype_ex_time_tz;
+	case SQL_TIMESTAMP_TZ_EX:
+		return dtype_ex_timestamp_tz;
 	default:
 		return dtype_unknown;
 	}
@@ -1596,11 +1590,11 @@ unsigned sqlTypeToDsc(unsigned runOffset, unsigned sqlType, unsigned sqlLength,
 	return runOffset + sizeof(SSHORT);
 }
 
-const ISC_STATUS* nextArg(const ISC_STATUS* v) throw()
+const ISC_STATUS* nextCode(const ISC_STATUS* v) throw()
 {
 	do
 	{
-		v += (v[0] == isc_arg_cstring ? 3 : 2);
+		v += nextArg(v[0]);
 	} while (v[0] != isc_arg_warning && v[0] != isc_arg_gds && v[0] != isc_arg_end);
 
 	return v;
@@ -1608,7 +1602,7 @@ const ISC_STATUS* nextArg(const ISC_STATUS* v) throw()
 
 bool containsErrorCode(const ISC_STATUS* v, ISC_STATUS code)
 {
-	for (; v[0] == isc_arg_gds; v = nextArg(v))
+	for (; v[0] == isc_arg_gds; v = nextCode(v))
 	{
 		if (v[1] == code)
 			return true;

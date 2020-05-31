@@ -374,6 +374,11 @@ USHORT PAR_datatype(BlrReader& blrReader, dsc* desc)
 			desc->dsc_length = sizeof(ISC_TIMESTAMP_TZ);
 			break;
 
+		case blr_ex_timestamp_tz:
+			desc->dsc_dtype = dtype_ex_timestamp_tz;
+			desc->dsc_length = sizeof(ISC_TIMESTAMP_TZ_EX);
+			break;
+
 		case blr_sql_date:
 			desc->dsc_dtype = dtype_sql_date;
 			desc->dsc_length = type_lengths[dtype_sql_date];
@@ -387,6 +392,11 @@ USHORT PAR_datatype(BlrReader& blrReader, dsc* desc)
 		case blr_sql_time_tz:
 			desc->dsc_dtype = dtype_sql_time_tz;
 			desc->dsc_length = type_lengths[dtype_sql_time_tz];
+			break;
+
+		case blr_ex_time_tz:
+			desc->dsc_dtype = dtype_ex_time_tz;
+			desc->dsc_length = type_lengths[dtype_ex_time_tz];
 			break;
 
 		case blr_double:
@@ -682,6 +692,26 @@ CompoundStmtNode* PAR_make_list(thread_db* tdbb, StmtNodeStack& stack)
 	return node;
 }
 
+
+ULONG PAR_marks(Jrd::CompilerScratch* csb)
+{
+	if (csb->csb_blr_reader.getByte() != blr_marks)
+		PAR_syntax_error(csb, "blr_marks");
+
+	switch (csb->csb_blr_reader.getByte())
+	{
+	case 1:
+		return csb->csb_blr_reader.getByte();
+
+	case 2:
+		return csb->csb_blr_reader.getWord();
+
+	case 4:
+		return csb->csb_blr_reader.getLong();
+	}
+	PAR_syntax_error(csb, "valid length for blr_marks value (1, 2, or 4)");
+	return 0;
+}
 
 CompilerScratch* PAR_parse(thread_db* tdbb, const UCHAR* blr, ULONG blr_length,
 	bool internal_flag, ULONG dbginfo_length, const UCHAR* dbginfo)
@@ -1255,6 +1285,7 @@ RecordSourceNode* PAR_parseRecordSource(thread_db* tdbb, CompilerScratch* csb)
 			return ProcedureSourceNode::parse(tdbb, csb, blrOp);
 
 		case blr_rse:
+		case blr_lateral_rse:
 		case blr_rs_stream:
 			return PAR_rse(tdbb, csb, blrOp);
 
@@ -1289,6 +1320,9 @@ RseNode* PAR_rse(thread_db* tdbb, CompilerScratch* csb, SSHORT rse_op)
 
 	int count = (unsigned int) csb->csb_blr_reader.getByte();
 	RseNode* rse = FB_NEW_POOL(*tdbb->getDefaultPool()) RseNode(*tdbb->getDefaultPool());
+
+	if (rse_op == blr_lateral_rse)
+		rse->flags |= RseNode::FLAG_LATERAL;
 
 	while (--count >= 0)
 		rse->rse_relations.add(PAR_parseRecordSource(tdbb, csb));
@@ -1410,6 +1444,7 @@ RseNode* PAR_rse(thread_db* tdbb, CompilerScratch* csb)
 	switch (blrOp)
 	{
 		case blr_rse:
+		case blr_lateral_rse:
 		case blr_rs_stream:
 			return PAR_rse(tdbb, csb, blrOp);
 
@@ -1567,6 +1602,7 @@ DmlNode* PAR_parse_node(thread_db* tdbb, CompilerScratch* csb)
 	switch (blr_operator)
 	{
 		case blr_rse:
+		case blr_lateral_rse:
 		case blr_rs_stream:
 		case blr_singular:
 		case blr_scrollable:
@@ -1627,6 +1663,7 @@ void PAR_syntax_error(CompilerScratch* csb, const TEXT* string)
 
 	csb->csb_blr_reader.seekBackward(1);
 
+	// BLR syntax error: expected @1 at offset @2, encountered @3
 	PAR_error(csb, Arg::Gds(isc_syntaxerr) << Arg::Str(string) <<
 										  Arg::Num(csb->csb_blr_reader.getOffset()) <<
 										  Arg::Num(csb->csb_blr_reader.peekByte()));

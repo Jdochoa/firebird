@@ -234,7 +234,7 @@ void VerbAction::mergeTo(thread_db* tdbb, jrd_tra* transaction, VerbAction* next
 	release(transaction);
 }
 
-void VerbAction::undo(thread_db* tdbb, jrd_tra* transaction)
+void VerbAction::undo(thread_db* tdbb, jrd_tra* transaction, bool preserveLocks, VerbAction* preserveAction)
 {
 	// Undo changes recorded for this verb action.
 	// After that, clear the verb action and prepare it for later reuse.
@@ -258,7 +258,7 @@ void VerbAction::undo(thread_db* tdbb, jrd_tra* transaction)
 			if (!DPM_get(tdbb, &rpb, LCK_read))
 				BUGCHECK(186);	// msg 186 record disappeared
 
-			if (have_undo && !(rpb.rpb_flags & rpb_deleted))
+			if ((have_undo || preserveLocks) && !(rpb.rpb_flags & rpb_deleted))
 				VIO_data(tdbb, &rpb, transaction->tra_pool);
 			else
 				CCH_RELEASE(tdbb, &rpb.getWindow(tdbb));
@@ -267,7 +267,50 @@ void VerbAction::undo(thread_db* tdbb, jrd_tra* transaction)
 				BUGCHECK(185);	// msg 185 wrong record version
 
 			if (!have_undo)
-				VIO_backout(tdbb, &rpb, transaction);
+			{
+				if (preserveLocks && rpb.rpb_b_page)
+				{
+					// Fetch previous record version and update in place current version with it
+					record_param temp = rpb;
+					temp.rpb_page = rpb.rpb_b_page;
+					temp.rpb_line = rpb.rpb_b_line;
+					temp.rpb_record = NULL;
+
+					if (temp.rpb_flags & rpb_delta)
+						fb_assert(temp.rpb_prior != NULL);
+					else
+						fb_assert(temp.rpb_prior == NULL);
+
+					if (!DPM_fetch(tdbb, &temp, LCK_read))
+						BUGCHECK(291);		// msg 291 cannot find record back version
+
+					if (!(temp.rpb_flags & rpb_chained) || (temp.rpb_flags & (rpb_blob | rpb_fragment)))
+						ERR_bugcheck_msg("invalid back version");
+
+					VIO_data(tdbb, &temp, tdbb->getDefaultPool());
+
+					Record* const save_record = rpb.rpb_record;
+					if (rpb.rpb_flags & rpb_deleted)
+						rpb.rpb_record = NULL;
+					Record* const dead_record = rpb.rpb_record;
+
+					VIO_update_in_place(tdbb, transaction, &rpb, &temp);
+
+					if (dead_record)
+					{
+						rpb.rpb_record = NULL; // VIO_garbage_collect_idx will play with this record dirty tricks
+						VIO_garbage_collect_idx(tdbb, transaction, &rpb, dead_record);
+					}
+					rpb.rpb_record = save_record;
+
+					delete temp.rpb_record;
+
+					if (preserveAction)
+						RBM_SET(transaction->tra_pool, &preserveAction->vct_records, rpb.rpb_number.getValue());
+				} 
+				else
+					VIO_backout(tdbb, &rpb, transaction);
+			}
 			else
 			{
 				AutoUndoRecord record(vct_undo->current().setupRecord(transaction));
@@ -378,7 +421,7 @@ void Savepoint::cleanupTempData()
 	}
 }
 
-Savepoint* Savepoint::rollback(thread_db* tdbb, Savepoint* prior)
+Savepoint* Savepoint::rollback(thread_db* tdbb, Savepoint* prior, bool preserveLocks)
 {
 	// Undo changes made in this savepoint.
 	// Perform index and BLOB cleanup if needed.
@@ -398,8 +441,12 @@ Savepoint* Savepoint::rollback(thread_db* tdbb, Savepoint* prior)
 		while (m_actions)
 		{
 			VerbAction* const action = m_actions;
+			VerbAction* preserveAction = nullptr;
 
-			action->undo(tdbb, m_transaction);
+			if (preserveLocks && m_next)
+				preserveAction = m_next->createAction(action->vct_relation);
+
+			action->undo(tdbb, m_transaction, preserveLocks, preserveAction);
 
 			m_actions = action->vct_next;
 			action->vct_next = m_freeActions;

@@ -33,7 +33,7 @@
 
 namespace Replication
 {
-	enum SegmentState
+	enum SegmentState : USHORT
 	{
 		SEGMENT_STATE_FREE = 0,
 		SEGMENT_STATE_USED = 1,
@@ -45,12 +45,10 @@ namespace Replication
 	{
 		char hdr_signature[12];
 		USHORT hdr_version;
-		USHORT hdr_protocol;
+		SegmentState hdr_state;
 		Firebird::Guid hdr_guid;
 		FB_UINT64 hdr_sequence;
-		ISC_TIMESTAMP hdr_timestamp;
-		SegmentState hdr_state;
-		ULONG hdr_length;
+		FB_UINT64 hdr_length;
 	};
 
 	const char LOG_SIGNATURE[] = "FBCHANGELOG";
@@ -117,18 +115,20 @@ namespace Replication
 		{
 		public:
 			LockCheckout(ChangeLog* log)
-				: m_log(log)
+				: m_log(log && !log->m_shutdown ? log : NULL)
 			{
-				m_log->unlockState();
+				if (m_log)
+					m_log->unlockState();
 			}
 
 			~LockCheckout()
 			{
-				m_log->lockState();
+				if (m_log)
+					m_log->lockState();
 			}
 
 		private:
-			ChangeLog* m_log;
+			ChangeLog* const m_log;
 		};
 
 		// Changelog segment (physical file on disk)
@@ -143,6 +143,11 @@ namespace Replication
 			bool validate(const Firebird::Guid& guid) const;
 			void append(ULONG length, const UCHAR* data);
 			void copyTo(const Firebird::PathName& filename) const;
+
+			bool isEmpty() const
+			{
+				return (m_header->hdr_length == sizeof(SegmentHeader));
+			}
 
 			bool hasData() const
 			{
@@ -192,7 +197,6 @@ namespace Replication
 	public:
 		ChangeLog(Firebird::MemoryPool& pool,
 				  const Firebird::string& dbId,
-				  const Firebird::PathName& database,
 				  const Firebird::Guid& guid,
 				  const FB_UINT64 sequence,
 				  const Config* config);
@@ -232,8 +236,7 @@ namespace Replication
 
 		void switchActiveSegment();
 
-		const Firebird::string m_dbId;
-		const Firebird::PathName m_database;
+		const Firebird::string& m_dbId;
 		const Config* const m_config;
 		Firebird::Array<Segment*> m_segments;
 		Firebird::AutoPtr<Firebird::SharedMemory<State> > m_sharedMemory;

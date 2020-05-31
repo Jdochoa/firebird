@@ -49,6 +49,8 @@
 #include <aclapi.h>
 #include <Winsock2.h>
 
+using namespace Firebird;
+
 namespace os_utils
 {
 
@@ -67,7 +69,7 @@ SLONG get_user_id(const TEXT* /*user_name*/)
 
 
 // waits for implementation
-bool get_user_home(int /*user_id*/, Firebird::PathName& /*homeDir*/)
+bool get_user_home(int /*user_id*/, PathName& /*homeDir*/)
 {
 	return false;
 }
@@ -85,8 +87,8 @@ void adjustLockDirectoryAccess(const char* pathname)
 		// We should pass root directory in format "C:\" into GetVolumeInformation().
 		// In case of pathname is not local folder (i.e. \\share\folder) let
 		// GetVolumeInformation() return an error.
-		Firebird::PathName root(pathname);
-		const Firebird::PathName::size_type pos = root.find(':', 0);
+		PathName root(pathname);
+		const PathName::size_type pos = root.find(':', 0);
 		if (pos == 1)
 		{
 			root.erase(pos + 1, root.length());
@@ -95,7 +97,7 @@ void adjustLockDirectoryAccess(const char* pathname)
 
 		DWORD fsflags;
 		if (!GetVolumeInformation(root.c_str(), NULL, 0, NULL, NULL, &fsflags, NULL, 0))
-			Firebird::system_error::raise("GetVolumeInformation");
+			system_error::raise("GetVolumeInformation");
 
 		if (!(fsflags & FS_PERSISTENT_ACLS))
 			return;
@@ -109,20 +111,20 @@ void adjustLockDirectoryAccess(const char* pathname)
 				NULL, NULL, &pOldACL, NULL,
 				&pSecDesc) != ERROR_SUCCESS)
 		{
-			Firebird::system_error::raise("GetNamedSecurityInfo");
+			system_error::raise("GetNamedSecurityInfo");
 		}
 
 		SID_IDENTIFIER_AUTHORITY sidAuth = SECURITY_NT_AUTHORITY;
 		if (!AllocateAndInitializeSid(&sidAuth, 2, SECURITY_BUILTIN_DOMAIN_RID,
 			DOMAIN_ALIAS_RID_USERS, 0, 0, 0, 0, 0, 0, &pSID_Users))
 		{
-			Firebird::system_error::raise("AllocateAndInitializeSid");
+			system_error::raise("AllocateAndInitializeSid");
 		}
 
 		if (!AllocateAndInitializeSid(&sidAuth, 2, SECURITY_BUILTIN_DOMAIN_RID,
 			DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &pSID_Administrators))
 		{
-			Firebird::system_error::raise("AllocateAndInitializeSid");
+			system_error::raise("AllocateAndInitializeSid");
 		}
 
 		EXPLICIT_ACCESS eas[2];
@@ -143,18 +145,18 @@ void adjustLockDirectoryAccess(const char* pathname)
 		eas[1].Trustee.ptstrName  = (LPSTR) pSID_Administrators;
 
 		if (SetEntriesInAcl(2, eas, pOldACL, &pNewACL) != ERROR_SUCCESS)
-			Firebird::system_error::raise("SetEntriesInAcl");
+			system_error::raise("SetEntriesInAcl");
 
 		if (SetNamedSecurityInfo((LPSTR) pathname,
 				SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
 				NULL, NULL, pNewACL, NULL) != ERROR_SUCCESS)
 		{
-			Firebird::system_error::raise("SetNamedSecurityInfo");
+			system_error::raise("SetNamedSecurityInfo");
 		}
 	}
-	catch (const Firebird::Exception& ex)
+	catch (const Exception& ex)
 	{
-		Firebird::string str;
+		string str;
 		str.printf("Error adjusting access rights for folder \"%s\" :", pathname);
 
 		iscLogException(str.c_str(), ex);
@@ -202,7 +204,7 @@ void createLockDirectory(const char* pathname)
 		}
 	}
 
-	Firebird::string err;
+	string err;
 	if (attr == INVALID_FILE_ATTRIBUTES)
 	{
 		err.printf("Can't create directory \"%s\". OS errno is %d", pathname, errcode);
@@ -211,7 +213,7 @@ void createLockDirectory(const char* pathname)
 			errorLogged = true;
 			gds__log(err.c_str());
 		}
-		Firebird::fatal_exception::raise(err.c_str());
+		fatal_exception::raise(err.c_str());
 	}
 
 	if (!(attr & FILE_ATTRIBUTE_DIRECTORY))
@@ -222,7 +224,7 @@ void createLockDirectory(const char* pathname)
 			errorLogged = true;
 			gds__log(err.c_str());
 		}
-		Firebird::fatal_exception::raise(err.c_str());
+		fatal_exception::raise(err.c_str());
 	}
 
 	if (attr & FILE_ATTRIBUTE_READONLY)
@@ -233,7 +235,7 @@ void createLockDirectory(const char* pathname)
 			errorLogged = true;
 			gds__log(err.c_str());
 		}
-		Firebird::fatal_exception::raise(err.c_str());
+		fatal_exception::raise(err.c_str());
 	}
 }
 
@@ -243,7 +245,7 @@ int openCreateSharedFile(const char* pathname, int flags)
 	int rc = open(pathname, flags | O_RDWR | O_CREAT, S_IREAD | S_IWRITE);
 	if (rc < 0)
 	{
-		(Firebird::Arg::Gds(isc_io_error) << "open" << pathname << Firebird::Arg::Gds(isc_io_open_err)
+		(Arg::Gds(isc_io_error) << "open" << pathname << Arg::Gds(isc_io_open_err)
 			<< strerror(errno)).raise();
 	}
 	return rc;
@@ -277,7 +279,7 @@ bool isIPv6supported()
 {
 	INT proto[] = {IPPROTO_TCP, 0};
 
-	Firebird::HalfStaticArray<char, sizeof(WSAPROTOCOL_INFO) * 4> buf;
+	HalfStaticArray<char, sizeof(WSAPROTOCOL_INFO) * 4> buf;
 
 	DWORD len = buf.getCapacity();
 	LPWSAPROTOCOL_INFO pi = (LPWSAPROTOCOL_INFO) buf.getBuffer(len);
@@ -313,7 +315,7 @@ FILE* fopen(const char* pathname, const char* mode)
 	return ::fopen(pathname, mode);
 }
 
-void getUniqueFileId(HANDLE fd, Firebird::UCharBuffer& id)
+void getUniqueFileId(HANDLE fd, UCharBuffer& id)
 {
 	BY_HANDLE_FILE_INFORMATION file_info;
 	GetFileInformationByHandle(fd, &file_info);

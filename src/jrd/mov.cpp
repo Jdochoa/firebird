@@ -28,6 +28,7 @@
 
 #include "firebird.h"
 #include "../common/gdsassert.h"
+#include "../common/classes/VaryStr.h"
 #include "../jrd/jrd.h"
 #include "../jrd/val.h"
 #include "../jrd/intl.h"
@@ -54,6 +55,8 @@ int MOV_compare(Jrd::thread_db* tdbb, const dsc* arg1, const dsc* arg2)
  *	Compare two descriptors.  Return (-1, 0, 1) if a<b, a=b, or a>b.
  *
  **************************************/
+	fb_assert(!(arg1->dsc_flags & DSC_null));
+	fb_assert(!(arg2->dsc_flags & DSC_null));
 
 	return CVT2_compare(arg1, arg2, tdbb->getAttachment()->att_dec_status);
 }
@@ -169,16 +172,12 @@ void MOV_get_metaname(Jrd::thread_db* tdbb, const dsc* desc, MetaName& name)
  *	to the user-supplied object.
  *
  **************************************/
-	USHORT ttype;
-	UCHAR* ptr = NULL;
 
-	const USHORT length = CVT_get_string_ptr(desc, &ttype, &ptr, NULL, 0, tdbb->getAttachment()->att_dec_status);
-
-	fb_assert(ptr);
-	fb_assert(length <= MAX_SQL_IDENTIFIER_LEN);
-	fb_assert(ttype == ttype_ascii || ttype == ttype_metadata);
-
-	name.assign(reinterpret_cast<char*>(ptr), length);
+	VaryStr<MAX_SQL_IDENTIFIER_SIZE> temp;
+	const char* str = NULL;
+	const auto len = MOV_make_string(tdbb, desc, ttype_metadata, &str,
+									 &temp, MAX_SQL_IDENTIFIER_SIZE);
+	name.assign(str, len);
 }
 
 

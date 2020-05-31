@@ -15,7 +15,7 @@ if errorlevel 1 call :ERROR build failed - see make_icu_%FB_TARGET_PLATFORM%.log
 
 @echo Extracting tzdata
 mkdir %FB_ROOT_PATH%\temp\%FB_OBJ_DIR%\firebird\tzdata
-call zipjs.bat unzip -source "%FB_LONG_ROOT_PATH%\extern\icu\tzdata\le.zip" -destination %FB_ROOT_PATH%\temp\%FB_OBJ_DIR%\firebird\tzdata -keep yes
+unzip -o %FB_ROOT_PATH%\extern\icu\tzdata\le.zip -d %FB_ROOT_PATH%\temp\%FB_OBJ_DIR%\firebird\tzdata
 
 @goto :EOF
 

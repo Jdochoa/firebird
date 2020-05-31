@@ -485,6 +485,7 @@ static bool grant_privileges(thread_db*, SSHORT, DeferredWork*, jrd_tra*);
 static bool db_crypt(thread_db*, SSHORT, DeferredWork*, jrd_tra*);
 static bool set_linger(thread_db*, SSHORT, DeferredWork*, jrd_tra*);
 static bool clear_cache(thread_db*, SSHORT, DeferredWork*, jrd_tra*);
+static bool change_repl_state(thread_db*, SSHORT, DeferredWork*, jrd_tra*);
 
 // ----------------------------------------------------------------
 
@@ -587,13 +588,13 @@ static void raiseRelationInUseError(const jrd_rel* relation)
 	raiseObjectInUseError(obj_type, obj_name);
 }
 
-static void raiseRoutineInUseError(const Routine* routine)
+static void raiseRoutineInUseError(const Routine* routine, const QualifiedName& name)
 {
 	const string obj_type =
 		(routine->getObjectType() == obj_udf) ? "FUNCTION" : "PROCEDURE";
 	const string obj_name = routine->getName().toString();
 
-	raiseObjectInUseError(obj_type, obj_name);
+	raiseObjectInUseError(obj_type, obj_name.hasData() ? obj_name : name.toString());
 }
 
 static void raiseTooManyVersionsError(const int obj_type, const string& obj_name)
@@ -712,8 +713,6 @@ namespace
 			jrd_tra* transaction)
 		{
 			SET_TDBB(tdbb);
-
-			Jrd::Attachment* attachment = tdbb->getAttachment();
 			const QualifiedName name(work->dfw_name, work->dfw_package);
 			Routine* routine;
 
@@ -745,7 +744,7 @@ namespace
 						if (!LCK_convert(tdbb, routine->existenceLock, LCK_EX,
 								transaction->getLockWait()))
 						{
-							raiseRoutineInUseError(routine);
+							raiseRoutineInUseError(routine, name);
 						}
 					}
 
@@ -764,7 +763,7 @@ namespace
 					// Do not allow to modify routine used by user requests
 					if (routine->isUsed() && MET_routine_in_use(tdbb, routine))
 					{
-						///raiseRoutineInUseError(routine);
+						///raiseRoutineInUseError(routine, name);
 						gds__log("Modifying %s %s which is currently in use by active user requests",
 								 Self::getTypeStr(), name.toString().c_str());
 
@@ -792,7 +791,7 @@ namespace
 					if (routine->getStatement())
 					{
 						if (routine->getStatement()->isActive())
-							raiseRoutineInUseError(routine);
+							raiseRoutineInUseError(routine, name);
 
 						// release the request
 
@@ -833,6 +832,7 @@ namespace
 					{
 						SSHORT validBlr = FALSE;
 
+						Jrd::Attachment* attachment = tdbb->getAttachment();
 						MemoryPool* newPool = attachment->createPool();
 						try
 						{
@@ -866,7 +866,8 @@ namespace
 			jrd_tra* transaction)
 		{
 			SET_TDBB(tdbb);
-			T* routine = NULL;
+			const QualifiedName name(work->dfw_name, work->dfw_package);
+			T* routine;
 
 			switch (phase)
 			{
@@ -895,7 +896,7 @@ namespace
 						if (!LCK_convert(tdbb, routine->existenceLock, LCK_EX,
 								transaction->getLockWait()))
 						{
-							raiseRoutineInUseError(routine);
+							raiseRoutineInUseError(routine, name);
 						}
 					}
 
@@ -914,12 +915,10 @@ namespace
 					if (!routine)
 						return false;
 
-					const QualifiedName name(work->dfw_name, work->dfw_package);
-
 					// Do not allow to drop routine used by user requests
 					if (routine->isUsed() && MET_routine_in_use(tdbb, routine))
 					{
-						///raiseRoutineInUseError(routine);
+						///raiseRoutineInUseError(routine, name);
 						gds__log("Deleting %s %s which is currently in use by active user requests",
 							Self::getTypeStr(), name.toString().c_str());
 
@@ -941,7 +940,7 @@ namespace
 						if (routine->getStatement()->isActive())
 						{
 							routine->flags = old_flags;
-							raiseRoutineInUseError(routine);
+							raiseRoutineInUseError(routine, name);
 						}
 
 						routine->releaseStatement(tdbb);
@@ -1235,6 +1234,7 @@ static const deferred_task task_table[] =
 	{ dfw_db_crypt, db_crypt },
 	{ dfw_set_linger, set_linger },
 	{ dfw_clear_cache, clear_cache },
+	{ dfw_change_repl_state, change_repl_state },
 	{ dfw_null, NULL }
 };
 
@@ -1608,8 +1608,9 @@ void DFW_perform_post_commit_work(jrd_tra* transaction)
 		case dfw_post_event:
 			EventManager::init(transaction->tra_attachment);
 
-			dbb->dbb_event_mgr->postEvent(work->dfw_name.length(), work->dfw_name.c_str(),
-										  work->dfw_count);
+			dbb->eventManager()->postEvent(work->dfw_name.length(),
+										   work->dfw_name.c_str(),
+										   work->dfw_count);
 
 			delete work;
 			pending_events = true;
@@ -1626,7 +1627,7 @@ void DFW_perform_post_commit_work(jrd_tra* transaction)
 
 	if (pending_events)
 	{
-		dbb->dbb_event_mgr->deliverEvents();
+		dbb->eventManager()->deliverEvents();
 	}
 }
 
@@ -6348,6 +6349,48 @@ static bool scan_relation(thread_db* tdbb, SSHORT phase, DeferredWork* work, jrd
 
 	return false;
 }
+
+
+static bool change_repl_state(thread_db* tdbb, SSHORT phase, DeferredWork* work, jrd_tra*)
+{
+/**************************************
+ *
+ *	c h a n g e _ r e p l _ s t a t e
+ *
+ **************************************
+ *
+ * Functional description
+ *	Signal other processes to refresh their replication state.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Database* const dbb = tdbb->getDatabase();
+	Attachment* const attachment = tdbb->getAttachment();
+
+	switch (phase)
+	{
+	case 1:
+	case 2:
+	case 3:
+		return true;
+
+	case 4:
+		if (work->dfw_id == 0)
+		{
+			// replication state is changed
+			dbb->invalidateReplState(tdbb, true);
+		}
+		else
+		{
+			// replication set is changed
+			attachment->invalidateReplSet(tdbb, true);
+		}
+		break;
+	}
+
+	return false;
+}
+
 
 #ifdef NOT_USED_OR_REPLACED
 static bool shadow_defined(thread_db* tdbb)

@@ -1250,8 +1250,16 @@ Format* MET_current(thread_db* tdbb, jrd_rel* relation)
  *
  **************************************/
 
-	if (relation->rel_current_format)
+	// dimitr:	rel_current_format may sometimes get out of sync,
+	//			e.g. after DFW error raised during ALTER TABLE command.
+	//			Thus it makes sense to validate it before usage and
+	//			fetch the proper one if something is suspicious.
+
+	if (relation->rel_current_format &&
+		relation->rel_current_format->fmt_version == relation->rel_current_fmt)
+	{
 		return relation->rel_current_format;
+	}
 
 	SET_TDBB(tdbb);
 	Attachment* attachment = tdbb->getAttachment();
@@ -1749,6 +1757,52 @@ jrd_fld* MET_get_field(const jrd_rel* relation, USHORT id)
 		return NULL;
 
 	return (*vector)[id];
+}
+
+
+bool MET_get_repl_state(Jrd::thread_db* tdbb, const Firebird::MetaName& name)
+{
+/**************************************
+ *
+ *      M E T _ g e t _ r e p l _ s t a t e
+ *
+ **************************************
+ *
+ * Functional description
+ *      Return relication state (enabled/disabled)
+ *      for either database or given relation.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* const attachment = tdbb->getAttachment();
+
+	AutoRequest handle;
+	bool state = false;
+
+	if (name.hasData())
+	{
+		FOR(REQUEST_HANDLE handle)
+			PTAB IN RDB$PUBLICATION_TABLES
+			WITH PTAB.RDB$TABLE_NAME EQ name.c_str()
+		{
+			state = true;
+			break;
+		}
+		END_FOR
+	}
+	else
+	{
+		FOR(REQUEST_HANDLE handle)
+			PUB IN RDB$PUBLICATIONS
+			WITH PUB.RDB$ACTIVE_FLAG EQ 1
+		{
+			state = true;
+			break;
+		}
+		END_FOR
+	}
+
+	return state;
 }
 
 

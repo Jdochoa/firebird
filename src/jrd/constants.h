@@ -147,6 +147,8 @@ const char* const FUNCTIONS_GENERATOR = "RDB$FUNCTIONS";
 const char* const IMPLICIT_INTEGRITY_PREFIX = "INTEG_";
 const int IMPLICIT_INTEGRITY_PREFIX_LEN = 6;
 
+// Default publication name
+const char* const DEFAULT_PUBLICATION = "RDB$DEFAULT";
 
 //*****************************************
 // System flag meaning - mainly Firebird.

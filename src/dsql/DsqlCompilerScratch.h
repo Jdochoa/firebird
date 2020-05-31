@@ -169,6 +169,7 @@ public:
 		return statement;
 	}
 
+	void putBlrMarkers(ULONG marks);
 	void putDtype(const TypeClause* field, bool useSubType);
 	void putType(const TypeClause* type, bool useSubType);
 	void putLocalVariables(CompoundStmtNode* parameters, USHORT locals);

@@ -483,6 +483,7 @@ RecordSource* OPT_compile(thread_db* tdbb, CompilerScratch* csb, RseNode* rse,
 	AutoPtr<OptimizerBlk> opt(FB_NEW_POOL(*pool) OptimizerBlk(pool, rse));
 	opt->opt_streams.grow(csb->csb_n_stream);
 	opt->optimizeFirstRows = (rse->flags & RseNode::FLAG_OPT_FIRST_ROWS) != 0;
+
 	RecordSource* rsb = NULL;
 
 	try {
@@ -651,19 +652,23 @@ RecordSource* OPT_compile(thread_db* tdbb, CompilerScratch* csb, RseNode* rse,
 
 		if (rsb)
 		{
-			// AB: Save all inner-part streams
+			// AB: Save all outer-part streams
 			if (rse->rse_jointype == blr_inner ||
 				(rse->rse_jointype == blr_left && !innerSubStream))
 			{
 				rsb->findUsedStreams(opt->subStreams);
-				// Save also the outer streams
-				if (rse->rse_jointype == blr_left)
-					rsb->findUsedStreams(opt->outerStreams);
+				rsb->findUsedStreams(opt->outerStreams);
 			}
 
-			River* const river = FB_NEW_POOL(*pool) River(csb, rsb, node, opt->localStreams);
+			const auto river = FB_NEW_POOL(*pool) River(csb, rsb, node, opt->localStreams);
 			river->deactivate(csb);
 			rivers.add(river);
+		}
+		else
+		{
+			// We have a relation, just add its stream
+			fb_assert(opt->beds.hasData());
+			opt->outerStreams.add(opt->beds.back());
 		}
 	}
 
@@ -2246,7 +2251,7 @@ static RecordSource* gen_retrieval(thread_db*     tdbb,
 
 	fb_assert(relation);
 
-	const string alias = OPT_make_alias(tdbb, csb, csb_tail);
+	const string alias = OPT_make_alias(csb, stream);
 	csb_tail->activate();
 
 	// Time to find inversions. For each index on the relation
@@ -2263,6 +2268,7 @@ static RecordSource* gen_retrieval(thread_db*     tdbb,
 	RecordSource* rsb = NULL;
 	InversionNode* inversion = NULL;
 	BoolExprNode* condition = NULL;
+	Array<DbKeyRangeNode*> dbkeyRanges;
 
 	if (relation->rel_file)
 	{
@@ -2308,6 +2314,7 @@ static RecordSource* gen_retrieval(thread_db*     tdbb,
 		{
 			inversion = candidate->inversion;
 			condition = candidate->condition;
+			dbkeyRanges.assign(candidate->dbkeyRanges);
 
 			// Just for safety sake, this condition must be already checked
 			// inside OptimizerRetrieval::matchOnIndexes()
@@ -2318,6 +2325,7 @@ static RecordSource* gen_retrieval(thread_db*     tdbb,
 				fb_assert(false);
 				inversion = NULL;
 				condition = NULL;
+				dbkeyRanges.clear();
 			}
 		}
 
@@ -2398,7 +2406,7 @@ static RecordSource* gen_retrieval(thread_db*     tdbb,
 		if (inversion && condition)
 		{
 			RecordSource* const rsb1 =
-				FB_NEW_POOL(*tdbb->getDefaultPool()) FullTableScan(csb, alias, stream, relation);
+				FB_NEW_POOL(*tdbb->getDefaultPool()) FullTableScan(csb, alias, stream, relation, dbkeyRanges);
 			RecordSource* const rsb2 =
 				FB_NEW_POOL(*tdbb->getDefaultPool()) BitmapTableScan(csb, alias, stream, relation, inversion);
 
@@ -2410,7 +2418,7 @@ static RecordSource* gen_retrieval(thread_db*     tdbb,
 		}
 		else
 		{
-			rsb = FB_NEW_POOL(*tdbb->getDefaultPool()) FullTableScan(csb, alias, stream, relation);
+			rsb = FB_NEW_POOL(*tdbb->getDefaultPool()) FullTableScan(csb, alias, stream, relation, dbkeyRanges);
 
 			if (boolean)
 				csb->csb_rpt[stream].csb_flags |= csb_unmatched;

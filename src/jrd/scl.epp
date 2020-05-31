@@ -77,6 +77,8 @@ static SecurityClass::flags_t walk_acl(thread_db* tdbb, const Acl&, const MetaNa
 	SLONG, const Firebird::MetaName&);
 static void raiseError(thread_db* tdbb, SecurityClass::flags_t mask, SLONG type, const Firebird::MetaName& name,
 	const Firebird::MetaName& r_name, const MetaName &invoker);
+static bool check_object(thread_db* tdbb, bool found, const SecurityClass* s_class, SLONG obj_type,
+	const Firebird::MetaName& obj_name, SecurityClass::flags_t mask, SLONG type, const Firebird::MetaName& name);
 
 
 namespace
@@ -460,12 +462,7 @@ bool SCL_check_exception(thread_db* tdbb, const MetaName& name, SecurityClass::f
 	}
 	END_FOR
 
-	if (s_class)
-	{
-		SCL_check_access(tdbb, s_class, 0, name, mask, SCL_object_exception, false, name);
-		return true;
-	}
-	return found;
+	return check_object(tdbb, found, s_class, 0, name, mask, SCL_object_exception, name);
 }
 
 
@@ -498,12 +495,7 @@ bool SCL_check_generator(thread_db* tdbb, const MetaName& name, SecurityClass::f
 	}
 	END_FOR
 
-	if (s_class)
-	{
-		SCL_check_access(tdbb, s_class, 0, name, mask, SCL_object_generator, false, name);
-		return true;
-	}
-	return found;
+	return check_object(tdbb, found, s_class, 0, name, mask, SCL_object_generator, name);
 }
 
 
@@ -662,12 +654,7 @@ bool SCL_check_package(thread_db* tdbb, const dsc* dsc_name, SecurityClass::flag
 	}
 	END_FOR
 
-	if (s_class)
-	{
-		SCL_check_access(tdbb, s_class, id_package, name, mask, SCL_object_package, false, name);
-		return true;
-	}
-	return found;
+	return check_object(tdbb, found, s_class, id_package, name, mask, SCL_object_package, name);
 }
 
 
@@ -709,12 +696,7 @@ bool SCL_check_procedure(thread_db* tdbb, const dsc* dsc_name, SecurityClass::fl
 	}
 	END_FOR
 
-	if (s_class)
-	{
-		SCL_check_access(tdbb, s_class, id_procedure, name, mask, SCL_object_procedure, false, name);
-		return true;
-	}
-	return found;
+	return check_object(tdbb, found, s_class, id_procedure, name, mask, SCL_object_procedure, name);
 }
 
 
@@ -756,12 +738,7 @@ bool SCL_check_function(thread_db* tdbb, const dsc* dsc_name, SecurityClass::fla
 	}
 	END_FOR
 
-	if (s_class)
-	{
-		SCL_check_access(tdbb, s_class, id_function, name, mask, SCL_object_function, false, name);
-		return true;
-	}
-	return found;
+	return check_object(tdbb, found, s_class, id_function, name, mask, SCL_object_function, name);
 }
 
 
@@ -880,12 +857,7 @@ bool SCL_check_view(thread_db* tdbb, const dsc* dsc_name, SecurityClass::flags_t
 	}
 	END_FOR
 
-	if (s_class)
-	{
-		SCL_check_access(tdbb, s_class, 0, NULL, mask, SCL_object_view, false, name);
-		return true;
-	}
-	return found;
+	return check_object(tdbb, found, s_class, 0, NULL, mask, SCL_object_view, name);
 }
 
 void SCL_check_role(thread_db* tdbb, const Firebird::MetaName& name, SecurityClass::flags_t mask)
@@ -1847,3 +1819,22 @@ USHORT SCL_convert_privilege(thread_db* tdbb, jrd_tra* transaction, const Firebi
 
 	return rc;
 }
+
+// check object existence and access rights
+static bool check_object(thread_db* tdbb,
+						 bool found,
+						 const SecurityClass* s_class,
+						 SLONG obj_type,
+						 const Firebird::MetaName& obj_name,
+						 SecurityClass::flags_t mask,
+						 SLONG type,
+						 const Firebird::MetaName& name)
+{
+	if (s_class)
+	{
+		SCL_check_access(tdbb, s_class, obj_type, obj_name, mask, type, false, name);
+		return true;
+	}
+	return found;
+}
+

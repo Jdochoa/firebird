@@ -1199,17 +1199,19 @@ void PluginManager::threadDetach()
 
 namespace {
 
-class DirCache
+class DataCache
 {
 public:
-	explicit DirCache(MemoryPool &p)
-		: cache(p)
+	explicit DataCache(MemoryPool &p)
+		: cache(p), db(p)
 	{
 		cache.resize(IConfigManager::DIR_COUNT);
 		for (unsigned i = 0; i < IConfigManager::DIR_COUNT; ++i)
 		{
 			cache[i] = fb_utils::getPrefix(i, "");
 		}
+
+		db = fb_utils::getPrefix(IConfigManager::DIR_SECDB, "security4.fdb");
 	}
 
 	const char* getDir(unsigned code)
@@ -1218,11 +1220,17 @@ public:
 		return cache[code].c_str();
 	}
 
+	const char* getDb()
+	{
+		return db.c_str();
+	}
+
 private:
 	ObjectsArray<PathName> cache;
+	PathName db;
 };
 
-InitInstance<DirCache> dirCache;
+InitInstance<DataCache> dataCache;
 
 }	// anonymous namespace
 
@@ -1244,7 +1252,7 @@ public:
 	{
 		try
 		{
-			return dirCache().getDir(code);
+			return dataCache().getDir(code);
 		}
 		catch (const Exception&)
 		{
@@ -1305,6 +1313,12 @@ public:
 	{
 		return rootDetector().getRootDirectory();
 	}
+
+	const char* getDefaultSecurityDb()
+	{
+		return dataCache().getDb();
+	}
+
 };
 
 static ConfigManager configManager;

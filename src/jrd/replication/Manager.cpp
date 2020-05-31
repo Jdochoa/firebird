@@ -37,9 +37,6 @@ using namespace Replication;
 namespace Replication
 {
 	const size_t MAX_BG_WRITER_LAG = 10 * 1024 * 1024;	// 10 MB
-
-	GlobalPtr<Manager::DbReplMgrMap> Manager::g_rmMap;
-	GlobalPtr<Mutex> Manager::g_mapMutex;
 }
 
 
@@ -98,77 +95,9 @@ bool TableMatcher::matchTable(const MetaName& tableName)
 
 // Replication manager
 
-Manager* Manager::create(const string& dbId,
-						 const PathName& database,
-						 const Guid& guid)
-{
-	MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-	Manager* mgr = NULL;
-	if (!g_rmMap->get(dbId, mgr))
-	{
-		const auto config = Replication::Config::get(database);
-
-		if (config)
-		{
-			mgr = FB_NEW Manager(dbId, database, guid, config);
-
-			if (g_rmMap->put(dbId, mgr))
-				fb_assert(false);
-
-			guard.release();
-
-			mgr->init();
-		}
-	}
-
-	if (mgr)
-	{
-		mgr->addRef();
-		return mgr;
-	}
-
-	return NULL;
-}
-
-void Manager::destroy(Manager* mgr)
-{
-	if (mgr)
-	{
-		const string dbId = mgr->m_dbId;
-
-		MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-		if (!mgr->release())
-		{
-			if (!g_rmMap->remove(dbId))
-				fb_assert(false);
-		}
-	}
-}
-
-TableMatcher* Manager::createMatcher(MemoryPool& pool, const string& dbId)
-{
-	MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-	Manager* mgr = NULL;
-	if (g_rmMap->get(dbId, mgr))
-	{
-		const auto config = mgr->getConfig();
-		return FB_NEW_POOL(pool) TableMatcher(pool, config->includeFilter, config->excludeFilter);
-	}
-
-	return NULL;
-}
-
-
 Manager::Manager(const string& dbId,
-				 const PathName& database,
-				 const Guid& guid,
 				 const Replication::Config* config)
-	: m_dbId(getPool(), dbId),
-	  m_database(getPool(), database),
-	  m_config(config),
+	: m_config(config),
 	  m_replicas(getPool()),
 	  m_buffers(getPool()),
 	  m_queue(getPool()),
@@ -181,49 +110,15 @@ Manager::Manager(const string& dbId,
 	const auto tdbb = JRD_get_thread_data();
 	const auto dbb = tdbb->getDatabase();
 
+	dbb->ensureGuid(tdbb);
+	const Guid& guid = dbb->dbb_guid;
 	m_sequence = dbb->dbb_repl_sequence;
 
 	if (config->logDirectory.hasData())
 	{
 		m_changeLog = FB_NEW_POOL(getPool())
-			ChangeLog(getPool(), dbId, database, guid, m_sequence, config);
+			ChangeLog(getPool(), dbId, guid, m_sequence, config);
 	}
-
-	Thread::start(writer_thread, this, THREAD_medium, 0);
-	m_startupSemaphore.enter();
-}
-
-Manager::~Manager()
-{
-	m_shutdown = true;
-
-	m_workingSemaphore.release();
-	m_cleanupSemaphore.enter();
-
-	MutexLockGuard guard(m_queueMutex, FB_FUNCTION);
-
-	// Detach from synchronous replicas
-
-	FbLocalStatus localStatus;
-
-	for (auto& iter : m_replicas)
-	{
-		iter->replicator->close(&localStatus);
-		iter->attachment->detach(&localStatus);
-	}
-
-	while (m_buffers.hasData())
-		delete m_buffers.pop();
-}
-
-void Manager::init()
-{
-	MutexLockGuard guard(m_queueMutex, FB_FUNCTION);
-
-	// Check whether everything is already initialized
-
-	if (m_config->syncReplicas.isEmpty() || m_replicas.hasData())
-		return;
 
 	// Attach to synchronous replicas (if any)
 
@@ -281,6 +176,32 @@ void Manager::init()
 
 		m_replicas.add(FB_NEW_POOL(getPool()) SyncReplica(getPool(), attachment, replicator));
 	}
+
+	Thread::start(writer_thread, this, THREAD_medium, 0);
+	m_startupSemaphore.enter();
+}
+
+Manager::~Manager()
+{
+	m_shutdown = true;
+
+	m_workingSemaphore.release();
+	m_cleanupSemaphore.enter();
+
+	MutexLockGuard guard(m_queueMutex, FB_FUNCTION);
+
+	// Detach from synchronous replicas
+
+	FbLocalStatus localStatus;
+
+	for (auto& iter : m_replicas)
+	{
+		iter->replicator->close(&localStatus);
+		iter->attachment->detach(&localStatus);
+	}
+
+	while (m_buffers.hasData())
+		delete m_buffers.pop();
 }
 
 UCharBuffer* Manager::getBuffer()
@@ -321,7 +242,7 @@ void Manager::logError(const IStatus* status)
 		message += temp;
 	}
 
-	logOriginMessage(m_database, message, ERROR_MSG);
+	logOriginMessage(m_config->dbName, message, ERROR_MSG);
 }
 
 void Manager::flush(UCharBuffer* buffer, bool sync)

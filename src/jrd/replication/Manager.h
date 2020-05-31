@@ -53,9 +53,8 @@ namespace Replication
 		TablePermissionMap m_tables;
 	};
 
-	class Manager : public Firebird::RefCounted, protected Firebird::GlobalStorage
+	class Manager final : public Firebird::GlobalStorage
 	{
-	public:
 		struct SyncReplica
 		{
 			SyncReplica(Firebird::MemoryPool& pool, Firebird::IAttachment* att, Firebird::IReplicator* repl)
@@ -67,17 +66,16 @@ namespace Replication
 			Firebird::IReplicator* replicator;
 		};
 
-		typedef Firebird::GenericMap<Firebird::Pair<Firebird::Left<Firebird::string, Manager*> > > DbReplMgrMap;
-
 	public:
+		Manager(const Firebird::string& dbId,
+				const Replication::Config* config);
 		~Manager();
 
-		static Manager* create(const Firebird::string& dbId,
-							   const Firebird::PathName& database,
-							   const Firebird::Guid& guid);
-		static void destroy(Manager* mgr);
-
-		static TableMatcher* createMatcher(MemoryPool& pool, const Firebird::string& dbId);
+		TableMatcher* createTableMatcher(MemoryPool& pool)
+		{
+			return FB_NEW_POOL(pool)
+				TableMatcher(pool, m_config->includeFilter, m_config->excludeFilter);
+		}
 
 		Firebird::UCharBuffer* getBuffer();
 
@@ -85,7 +83,8 @@ namespace Replication
 
 		void forceLogSwitch()
 		{
-			m_changeLog->forceSwitch();
+			if (m_changeLog)
+				m_changeLog->forceSwitch();
 		}
 
 		const Replication::Config* getConfig() const
@@ -94,12 +93,6 @@ namespace Replication
 		}
 
 	private:
-		Manager(const Firebird::string& dbId,
-				const Firebird::PathName& database,
-				const Firebird::Guid& guid,
-				const Replication::Config* config);
-
-		void init();
 		void logError(const Firebird::IStatus* status);
 		void releaseBuffer(Firebird::UCharBuffer* buffer);
 
@@ -116,9 +109,7 @@ namespace Replication
 		Firebird::Semaphore m_cleanupSemaphore;
 		Firebird::Semaphore m_workingSemaphore;
 
-		const Firebird::string m_dbId;
-		const Firebird::PathName m_database;
-		const Firebird::AutoPtr<const Replication::Config> m_config;
+		const Replication::Config* const m_config;
 		Firebird::Array<SyncReplica*> m_replicas;
 		Firebird::Array<Firebird::UCharBuffer*> m_buffers;
 		Firebird::Mutex m_buffersMutex;
@@ -133,9 +124,6 @@ namespace Replication
 
 		Firebird::AutoPtr<ChangeLog> m_changeLog;
 		Firebird::RWLock m_lock;
-
-		static Firebird::GlobalPtr<DbReplMgrMap> g_rmMap;
-		static Firebird::GlobalPtr<Firebird::Mutex> g_mapMutex;
 	};
 }
 

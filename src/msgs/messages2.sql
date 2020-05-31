@@ -1052,6 +1052,10 @@ Data source : @4', NULL, NULL)
 ('cannot_update_old_blob', 'BLB_put_segment', 'blb.cpp', NULL, 0, 942, NULL, 'cannot update old BLOB', NULL, NULL);
 ('cannot_read_new_blob', 'BLB_get_segment', 'blb.cpp', NULL, 0, 943, NULL, 'cannot read from new BLOB', NULL, NULL);
 ('dyn_no_create_priv', NULL, 'scl.epp', NULL, 0, 944, NULL, 'No permission for CREATE @1 operation', NULL, NULL);
+('suspend_without_returns', NULL, 'StmtNodes.cpp', NULL, 0, 945, NULL, 'SUSPEND could not be used without RETURNS clause in PROCEDURE or EXECUTE BLOCK', NULL, NULL);
+('truncate_warn', NULL, 'cvt.cpp', NULL, 0, 946, NULL, 'String truncated warning due to the following reason', NULL, NULL);
+('truncate_monitor', NULL, 'Monitoring.cpp', NULL, 0, 947, NULL, 'Monitoring data does not fit into the field', NULL, NULL);
+('truncate_context', NULL, 'SysFunction.cpp', NULL, 0, 948, NULL, 'Engine data does not fit into return value of system function', NULL, NULL);
 -- QLI
 (NULL, NULL, NULL, NULL, 1, 0, NULL, 'expected type', NULL, NULL);
 (NULL, NULL, NULL, NULL, 1, 1, NULL, 'bad block type', NULL, NULL);
@@ -2506,7 +2510,7 @@ ERROR: Backup incomplete', NULL, NULL);
 ('gbak_max_dbkey_length', 'update_view_dbkey_lengths', 'restore.epp', NULL, 12, 340, NULL, 'value greater than @1 when calculating length of rdb$db_key for view @2', NULL, NULL);
 ('gbak_invalid_metadata', 'general_on_error', 'restore.epp', NULL, 12, 341, NULL, 'Invalid metadata detected. Use -FIX_FSS_METADATA option.', NULL, NULL);
 ('gbak_invalid_data', 'get_data', 'restore.epp', NULL, 12, 342, NULL, 'Invalid data detected. Use -FIX_FSS_DATA option.', NULL, NULL);
-(NULL, 'put_asciz', 'backup.epp', NULL, 12, 343, NULL, 'text for attribute @1 is too large in @2, truncating to @3 bytes', NULL, NULL);
+(NULL, 'put_asciz', NULL, NULL, 12, 343, NULL, 'text for attribute @1 is too large in @2, truncating to @3 bytes', NULL, NULL);
 ('gbak_inv_bkup_ver2', 'restore.epp', 'burp.cpp', 'do not change the param order', 12, 344, NULL, 'Expected backup version @2..@3.  Found @1', NULL, NULL);
 (NULL, 'write_relations', 'backup.epp', NULL, 12, 345, NULL, '    writing view @1', NULL, NULL);
 (NULL, 'get_relation', 'restore.epp', NULL, 12, 346, NULL, '    table @1 is a view', NULL, NULL);
@@ -2559,6 +2563,13 @@ ERROR: Backup incomplete', NULL, NULL);
 (NULL, 'get_db_creators', 'restore.epp', NULL, 12, 393, NULL, '    restoring database create grant for @1', NULL, NULL);
 (NULL, 'get_db_creators', 'restore.epp', NULL, 12, 394, NULL, 'restoring database create grants', NULL, NULL);
 (NULL, 'get_db_creators', 'restore.epp', NULL, 12, 395, NULL, 'database create grant', NULL, NULL);
+(NULL, 'BACKUP_backup', 'backup.epp', NULL, 12, 396, NULL, 'writing publications', NULL, NULL);
+(NULL, 'write_publications', 'backup.epp', NULL, 12, 397, NULL, '    writing publication @1', NULL, NULL);
+(NULL, 'write_pub_tables', 'backup.epp', NULL, 12, 398, NULL, '    writing publication for table @1', NULL, NULL);
+(NULL, 'get_publication', 'restore.epp', NULL, 12, 399, NULL, 'restoring publication @1', NULL, NULL);
+(NULL, 'get_publication', 'restore.epp', NULL, 12, 400, NULL, 'publication', NULL, NULL);
+(NULL, 'get_pub_table', 'restore.epp', NULL, 12, 401, NULL, 'restoring publication for table @1', NULL, NULL);
+(NULL, 'get_pub_table', 'restore.epp', NULL, 12, 402, NULL, 'publication for table', NULL, NULL);
 -- SQLERR
 (NULL, NULL, NULL, NULL, 13, 1, NULL, 'Firebird error', NULL, NULL);
 (NULL, NULL, NULL, NULL, 13, 74, NULL, 'Rollback not performed', NULL, NULL);

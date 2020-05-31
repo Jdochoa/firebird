@@ -136,7 +136,7 @@ static SLONG pwrite(int, SCHAR*, SLONG, SLONG);
 static bool raw_devices_validate_database (int, const PathName&);
 static int  raw_devices_unlink_database (const PathName&);
 #endif
-static int	openFile(const char*, const bool, const bool, const bool);
+static int	openFile(const Firebird::PathName&, const bool, const bool, const bool);
 static void	maybeCloseFile(int&);
 
 int PIO_add_file(thread_db* tdbb, jrd_file* main_file, const PathName& file_name, SLONG start)
@@ -674,18 +674,19 @@ jrd_file* PIO_open(thread_db* tdbb,
 	Database* const dbb = tdbb->getDatabase();
 
 	bool readOnly = false;
-	const TEXT* const ptr = (string.hasData() ? string : file_name).c_str();
-	int desc = openFile(ptr, false, false, false);
+	const PathName& expandedName(string.hasData() ? string : file_name);
+	const PathName& originalName(file_name.hasData() ? file_name : string);
+	int desc = openFile(expandedName, false, false, false);
 
 	if (desc == -1)
 	{
 		// Try opening the database file in ReadOnly mode. The database file could
 		// be on a RO medium (CD-ROM etc.). If this fileopen fails, return error.
 
-		desc = openFile(ptr, false, false, true);
+		desc = openFile(expandedName, false, false, true);
 		if (desc == -1)
 		{
-			ERR_post(Arg::Gds(isc_io_error) << Arg::Str("open") << Arg::Str(file_name) <<
+			ERR_post(Arg::Gds(isc_io_error) << Arg::Str("open") << Arg::Str(originalName) <<
 					 Arg::Gds(isc_io_open_err) << Arg::Unix(errno));
 		}
 
@@ -713,7 +714,7 @@ jrd_file* PIO_open(thread_db* tdbb,
 	}
 
 	const bool shareMode = dbb->dbb_config->getServerMode() != MODE_SUPER;
-	lockDatabaseFile(desc, shareMode, false, file_name.c_str(), isc_io_open_err);
+	lockDatabaseFile(desc, shareMode, false, expandedName.c_str(), isc_io_open_err);
 
 	// os_utils::posix_fadvise(desc, 0, 0, POSIX_FADV_RANDOM);
 
@@ -723,18 +724,18 @@ jrd_file* PIO_open(thread_db* tdbb,
 	// mode. Check if it is a special file (i.e. raw block device) and if a
 	// valid database is on it. If not, return an error.
 
-	if (PIO_on_raw_device(file_name))
+	if (PIO_on_raw_device(expandedName))
 	{
 		raw = true;
-		if (!raw_devices_validate_database(desc, file_name))
+		if (!raw_devices_validate_database(desc, expandedName))
 		{
-			ERR_post(Arg::Gds(isc_io_error) << Arg::Str("open") << Arg::Str(file_name) <<
+			ERR_post(Arg::Gds(isc_io_error) << Arg::Str("open") << Arg::Str(originalName) <<
 					 Arg::Gds(isc_io_open_err) << Arg::Unix(ENOENT));
 		}
 	}
 #endif // SUPPORT_RAW_DEVICES
 
-	return setup_file(dbb, string, desc, readOnly, shareMode, raw);
+	return setup_file(dbb, expandedName, desc, readOnly, shareMode, raw);
 }
 
 
@@ -888,7 +889,7 @@ static jrd_file* seek_file(jrd_file* file, BufferDesc* bdb, FB_UINT64* offset,
 }
 
 
-static int openFile(const char* name, const bool forcedWrites,
+static int openFile(const PathName& name, const bool forcedWrites,
 	const bool notUseFSCache, const bool readOnly)
 {
 /**************************************
@@ -913,7 +914,7 @@ static int openFile(const char* name, const bool forcedWrites,
 		flag |= O_DIRECT;
 #endif
 
-	return os_utils::open(name, flag);
+	return os_utils::open(name.c_str(), flag);
 }
 
 

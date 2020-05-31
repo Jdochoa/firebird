@@ -64,7 +64,6 @@
 #include "../jrd/jrd_proto.h"
 #include "../jrd/scl_proto.h"
 #include "../common/classes/ClumpletWriter.h"
-#include "../common/classes/TriState.h"
 #include "../common/utils_proto.h"
 #include "../lock/lock_proto.h"
 #include "../dsql/dsql.h"
@@ -145,7 +144,7 @@ jrd_req* TRA_get_prior_request(thread_db* tdbb)
 	return org_request;
 }
 
-void TRA_setup_request_snapshot(Jrd::thread_db* tdbb, Jrd::jrd_req* request, bool no_prior)
+void TRA_setup_request_snapshot(Jrd::thread_db* tdbb, Jrd::jrd_req* request)
 {
 	// This function is called whenever request is started in a transaction.
 	// Setup context to preserve read consistency in READ COMMITTED transactions.
@@ -160,7 +159,7 @@ void TRA_setup_request_snapshot(Jrd::thread_db* tdbb, Jrd::jrd_req* request, boo
 		return;
 
 	// See if there is any request right above us in the call stack
-	jrd_req* org_request = no_prior ? nullptr : TRA_get_prior_request(tdbb);
+	jrd_req* org_request = TRA_get_prior_request(tdbb);
 
 	if (org_request && org_request->req_transaction == transaction)
 	{
@@ -515,8 +514,8 @@ void TRA_commit(thread_db* tdbb, jrd_tra* transaction, const bool retaining_flag
 
 	if (retaining_flag)
 	{
-		trace.finish(ITracePlugin::RESULT_SUCCESS);
 		retain_context(tdbb, transaction, true, tra_committed);
+		trace.finish(ITracePlugin::RESULT_SUCCESS);
 		return;
 	}
 
@@ -1163,8 +1162,9 @@ jrd_tra* TRA_reconnect(thread_db* tdbb, const UCHAR* id, USHORT length)
 		USHORT flags = 0;
 		gds__msg_lookup(NULL, JRD_BUGCHK, message, sizeof(text), text, &flags);
 
+		// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
 		ERR_post(Arg::Gds(isc_no_recon) <<
-				 Arg::Gds(isc_tra_state) << Arg::Num(number) << Arg::Str(text));
+				 Arg::Gds(isc_tra_state) << Arg::Int64(number) << Arg::Str(text));
 	}
 
 	MemoryPool* const pool = attachment->createPool();
@@ -1426,8 +1426,8 @@ void TRA_rollback(thread_db* tdbb, jrd_tra* transaction, const bool retaining_fl
 
 	if (retaining_flag)
 	{
-		trace.finish(ITracePlugin::RESULT_SUCCESS);
 		retain_context(tdbb, transaction, false, state);
+		trace.finish(ITracePlugin::RESULT_SUCCESS);
 		return;
 	}
 
@@ -1616,8 +1616,11 @@ int TRA_snapshot_state(thread_db* tdbb, const jrd_tra* trans, TraNumber number, 
 			// GC thread accesses data directly without any request
 			if (jrd_req* current_request = tdbb->getRequest())
 			{
-				// There is no request snapshot when we build expression index
-				if (jrd_req* snapshot_request = current_request->req_snapshot.m_owner)
+				// Notes:
+				// 1) There is no request snapshot when we build expression index
+				// 2) Disable read committed snapshot after we encountered update conflict
+				jrd_req* snapshot_request = current_request->req_snapshot.m_owner;
+				if (snapshot_request && !(snapshot_request->req_flags & req_update_conflict))
 				{
 					if (stateCn > snapshot_request->req_snapshot.m_number)
 						return tra_active;
@@ -2852,7 +2855,7 @@ static void transaction_options(thread_db* tdbb,
 		case isc_tpb_wait:
 			if (!wait.assignOnce(true))
 			{
-				if (!wait.asBool())
+				if (!wait.value)
 				{
 					ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 							 Arg::Gds(isc_tpb_conflicting_options) << Arg::Str("isc_tpb_wait") <<
@@ -2933,7 +2936,7 @@ static void transaction_options(thread_db* tdbb,
 				ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 					// 'Option @1 is not valid if @2 was used previously in TPB'
 					Arg::Gds(isc_tpb_conflicting_options) <<
-					Arg::Str("isc_tpb_read_consistency") << (rec_version.asBool() ?
+					Arg::Str("isc_tpb_read_consistency") << (rec_version.value ?
 						Arg::Str("isc_tpb_rec_version") : Arg::Str("isc_tpb_no_rec_version")) );
 			}
 
@@ -2941,7 +2944,7 @@ static void transaction_options(thread_db* tdbb,
 			break;
 
 		case isc_tpb_nowait:
-			if (lock_timeout.asBool())
+			if (lock_timeout.value)
 			{
 				ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 						 Arg::Gds(isc_tpb_conflicting_options) << Arg::Str("isc_tpb_nowait") <<
@@ -2950,7 +2953,7 @@ static void transaction_options(thread_db* tdbb,
 
 			if (!wait.assignOnce(false))
 			{
-				if (wait.asBool())
+				if (wait.value)
 				{
 					ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 							 Arg::Gds(isc_tpb_conflicting_options) << Arg::Str("isc_tpb_nowait") <<
@@ -2969,7 +2972,7 @@ static void transaction_options(thread_db* tdbb,
 		case isc_tpb_read:
 			if (!read_only.assignOnce(true))
 			{
-				if (!read_only.asBool())
+				if (!read_only.value)
 				{
 					ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 							 Arg::Gds(isc_tpb_conflicting_options) << Arg::Str("isc_tpb_read") <<
@@ -2995,7 +2998,7 @@ static void transaction_options(thread_db* tdbb,
 		case isc_tpb_write:
 			if (!read_only.assignOnce(false))
 			{
-				if (read_only.asBool())
+				if (read_only.value)
 				{
 					ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 							 Arg::Gds(isc_tpb_conflicting_options) << Arg::Str("isc_tpb_write") <<
@@ -3021,7 +3024,7 @@ static void transaction_options(thread_db* tdbb,
 
 		case isc_tpb_lock_write:
 			// Cannot set a R/W table reservation if the whole txn is R/O.
-			if (read_only.asBool())
+			if (read_only.value)
 			{
 				ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 						 Arg::Gds(isc_tpb_writelock_after_readtxn));
@@ -3147,7 +3150,7 @@ static void transaction_options(thread_db* tdbb,
 
 		case isc_tpb_lock_timeout:
 			{
-				if (wait.isAssigned() && !wait.asBool())
+				if (wait.isAssigned() && !wait.value)
 				{
 					ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 							 Arg::Gds(isc_tpb_conflicting_options) << Arg::Str("isc_tpb_lock_timeout") <<
@@ -3281,7 +3284,7 @@ static void transaction_options(thread_db* tdbb,
 
 	if (rec_version.isAssigned() && !(transaction->tra_flags & TRA_read_committed))
 	{
-		if (rec_version.asBool())
+		if (rec_version.value)
 		{
 			ERR_post(Arg::Gds(isc_bad_tpb_content) <<
 					 Arg::Gds(isc_tpb_option_without_rc) << Arg::Str("isc_tpb_rec_version"));
@@ -3352,11 +3355,6 @@ static void transaction_start(thread_db* tdbb, jrd_tra* trans)
 	Jrd::Attachment* const attachment = tdbb->getAttachment();
 	WIN window(DB_PAGE_SPACE, -1);
 
-	// Inside the replica, only replicator sessions are allowed to modify data.
-	// Fake other transactions as read-only to disallow any modifications.
-	if (dbb->isReplica(REPLICA_READ_ONLY) && !(tdbb->tdbb_flags & TDBB_replicator))
-		trans->tra_flags |= TRA_readonly;
-
 	Lock* lock = FB_NEW_RPT(*tdbb->getDefaultPool(), 0) Lock(tdbb, sizeof(TraNumber), LCK_tra);
 
 	// Read header page and allocate transaction number.  Since
@@ -3402,6 +3400,7 @@ static void transaction_start(thread_db* tdbb, jrd_tra* trans)
 	// of four, which puts the transaction on a byte boundary.
 
 	trans->tra_number = number;
+	trans->tra_initial_number = number;
 	trans->tra_top = number;
 	trans->tra_oldest = oldest;
 	trans->tra_oldest_active = active;
@@ -3636,6 +3635,9 @@ static void transaction_start(thread_db* tdbb, jrd_tra* trans)
 				LCK_write_data(tdbb, lock, 0); // Fully disinhibit GC for this transaction
 			trans->tra_flags |= TRA_precommitted;
 		}
+
+		if (dbb->isReplicating(tdbb))
+			trans->tra_flags |= TRA_replicating;
 	}
 	catch (const Firebird::Exception&)
 	{
@@ -3847,7 +3849,7 @@ Savepoint* jrd_tra::startSavepoint(bool root)
 	return savepoint;
 }
 
-void jrd_tra::rollbackSavepoint(thread_db* tdbb)
+void jrd_tra::rollbackSavepoint(thread_db* tdbb, bool preserveLocks)
 /**************************************
  *
  *	 r o l l b a c k S a v e p o i n t
@@ -3863,8 +3865,11 @@ void jrd_tra::rollbackSavepoint(thread_db* tdbb)
 	{
 		REPL_save_cleanup(tdbb, this, tra_save_point, true);
 
+		if (tra_flags & TRA_ex_restart)
+			preserveLocks = true;
+
 		Jrd::ContextPoolHolder context(tdbb, tra_pool);
-		tra_save_point = tra_save_point->rollback(tdbb);
+		tra_save_point = tra_save_point->rollback(tdbb, NULL, preserveLocks);
 	}
 }
 

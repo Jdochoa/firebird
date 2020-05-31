@@ -373,6 +373,7 @@ void EXE_assignment(thread_db* tdbb, const ValueExprNode* to, dsc* from_desc, bo
 
 				case dtype_sql_time:
 				case dtype_sql_time_tz:
+				case dtype_ex_time_tz:
 					if (!Firebird::TimeStamp::isValidTime(*(GDS_TIME*) from_desc->dsc_address))
 					{
 						ERR_post(Arg::Gds(isc_time_range_exceeded));
@@ -381,6 +382,7 @@ void EXE_assignment(thread_db* tdbb, const ValueExprNode* to, dsc* from_desc, bo
 
 				case dtype_timestamp:
 				case dtype_timestamp_tz:
+				case dtype_ex_timestamp_tz:
 					if (!Firebird::TimeStamp::isValidTimeStamp(*(GDS_TIMESTAMP*) from_desc->dsc_address))
 					{
 						ERR_post(Arg::Gds(isc_datetime_range_exceeded));
@@ -875,7 +877,7 @@ void EXE_start(thread_db* tdbb, jrd_req* request, jrd_tra* transaction)
 	TRA_post_resources(tdbb, transaction, statement->resources);
 
 	TRA_attach_request(transaction, request);
-	request->req_flags &= req_in_use;
+	request->req_flags &= req_in_use | req_restart_ready;
 	request->req_flags |= req_active;
 	request->req_flags &= ~req_reserved;
 
@@ -1385,7 +1387,9 @@ const StmtNode* EXE_looper(thread_db* tdbb, jrd_req* request, const StmtNode* no
 				(*ptr)->close(tdbb);
 		}
 
-		TRA_release_request_snapshot(tdbb, request);
+		if (!exeState.errorPending)
+			TRA_release_request_snapshot(tdbb, request);
+
 		request->req_flags &= ~(req_active | req_reserved);
 		request->req_gmt_timestamp.invalidate();
 		release_blobs(tdbb, request);
@@ -1408,6 +1412,7 @@ const StmtNode* EXE_looper(thread_db* tdbb, jrd_req* request, const StmtNode* no
 		if (!(request->req_transaction->tra_flags & TRA_system))
 			request->req_transaction->rollbackToSavepoint(tdbb, savNumber);
 
+		TRA_release_request_snapshot(tdbb, request);
 		ERR_punt();
 	}
 

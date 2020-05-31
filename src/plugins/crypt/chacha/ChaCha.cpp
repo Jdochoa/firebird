@@ -50,20 +50,13 @@ void tomCheck(int err, const char* text)
 class Cipher : public GlobalStorage
 {
 public:
-	Cipher(unsigned int l, const unsigned char* key, unsigned int ivlen, const unsigned char* iv) throw()
+	Cipher(const unsigned char* key, unsigned int ivlen, const unsigned char* iv) throw()
 	{
-		if (l < 16)
-			(Arg::Gds(isc_random) << "Key too short").raise();
-		else if (l < 32)
-			l = 16;
-		else if (l > 32)
-			l = 32;
-
 		if (ivlen != 16)
 			(Arg::Gds(isc_random) << "Wrong IV length, need 16").raise();
 
 		unsigned ctr = (iv[12] << 24) + (iv[13] << 16) + (iv[14] << 8) + iv[15];
-		tomCheck(chacha_setup(&chacha, key, l, 20), "initializing CHACHA#20");
+		tomCheck(chacha_setup(&chacha, key, 32, 20), "initializing CHACHA#20");
 		tomCheck(chacha_ivctr32(&chacha, iv, 12, ctr), "setting IV for CHACHA#20");
 	}
 
@@ -143,7 +136,16 @@ void ChaCha::decrypt(CheckStatusWrapper* status, unsigned int length, const void
 
 Cipher* ChaCha::createCypher(unsigned int l, const void* key)
 {
-	return FB_NEW Cipher(l, static_cast<const unsigned char*>(key), iv.getCount(), iv.begin());
+	if (l < 16)
+		(Arg::Gds(isc_random) << "Key too short").raise();
+
+	hash_state md;
+	tomCheck(sha256_init(&md), "initializing sha256");
+	tomCheck(sha256_process(&md, static_cast<const unsigned char*>(key), l), "processing original key in sha256");
+	unsigned char stretched[32];
+	tomCheck(sha256_done(&md, stretched), "getting stretched key from sha256");
+
+	return FB_NEW Cipher(stretched, iv.getCount(), iv.begin());
 }
 
 const char* ChaCha::getKnownTypes(CheckStatusWrapper* status)

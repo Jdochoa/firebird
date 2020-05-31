@@ -70,6 +70,7 @@ void MetadataBuilder::setType(CheckStatusWrapper* status, unsigned index, unsign
 			if (dtype < DTYPE_TYPE_MAX)
 				msgMetadata->items[index].length = type_lengths[dtype];
 		}
+		msgMetadata->items[index].nullable = type & 1;
 
 		// Setting type & length is enough for an item to be ready for use
 		if (msgMetadata->items[index].length)
@@ -143,6 +144,67 @@ void MetadataBuilder::setScale(CheckStatusWrapper* status, unsigned index, int s
 		ex.stuffException(status);
 	}
 }
+
+void MetadataBuilder::setField(CheckStatusWrapper* status, unsigned index, const char* field)
+{
+	try
+	{
+		MutexLockGuard g(mtx, FB_FUNCTION);
+
+		indexError(index, "setField");
+		msgMetadata->items[index].field = field;
+	}
+	catch (const Exception& ex)
+	{
+		ex.stuffException(status);
+	}
+}
+
+void MetadataBuilder::setRelation(CheckStatusWrapper* status, unsigned index, const char* relation)
+{
+	try
+	{
+		MutexLockGuard g(mtx, FB_FUNCTION);
+
+		indexError(index, "setRelation");
+		msgMetadata->items[index].relation = relation;
+	}
+	catch (const Exception& ex)
+	{
+		ex.stuffException(status);
+	}
+}
+
+void MetadataBuilder::setOwner(CheckStatusWrapper* status, unsigned index, const char* owner)
+{
+	try
+	{
+		MutexLockGuard g(mtx, FB_FUNCTION);
+
+		indexError(index, "setOwner");
+		msgMetadata->items[index].owner = owner;
+	}
+	catch (const Exception& ex)
+	{
+		ex.stuffException(status);
+	}
+}
+
+void MetadataBuilder::setAlias(CheckStatusWrapper* status, unsigned index, const char* alias)
+{
+	try
+	{
+		MutexLockGuard g(mtx, FB_FUNCTION);
+
+		indexError(index, "setAlias");
+		msgMetadata->items[index].alias = alias;
+	}
+	catch (const Exception& ex)
+	{
+		ex.stuffException(status);
+	}
+}
+
 
 void MetadataBuilder::truncate(CheckStatusWrapper* status, unsigned count)
 {

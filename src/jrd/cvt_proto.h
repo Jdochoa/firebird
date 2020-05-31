@@ -57,7 +57,7 @@ namespace Jrd
 		virtual CHARSET_ID getChid(const dsc* d);
 		virtual CharSet* getToCharset(CHARSET_ID charset2);
 		virtual void validateData(CharSet* toCharset, SLONG length, const UCHAR* q);
-		virtual void validateLength(CharSet* toCharset, SLONG toLength, const UCHAR* start,
+		virtual ULONG validateLength(CharSet* toCharset, ULONG toLength, const UCHAR* start,
 			const USHORT to_size);
 		virtual SLONG getLocalDate();
 		virtual ISC_TIMESTAMP getCurrentGmtTimeStamp();
@@ -66,6 +66,21 @@ namespace Jrd
 
 	public:
 		static Firebird::GlobalPtr<EngineCallbacks> instance;
+	};
+
+	class TruncateCallbacks : public EngineCallbacks
+	{
+	public:
+		explicit TruncateCallbacks(ISC_STATUS tr)
+			: EngineCallbacks(ERR_post), truncateReason(tr)
+		{
+		}
+
+		virtual ULONG validateLength(CharSet* toCharset, ULONG toLength, const UCHAR* start,
+			const USHORT to_size);
+
+	private:
+		const ISC_STATUS truncateReason;
 	};
 }
 

@@ -297,6 +297,94 @@ RecordBitmap** EVL_bitmap(thread_db* tdbb, const InversionNode* node, RecordBitm
 }
 
 
+void EVL_dbkey_bounds(thread_db* tdbb, const Array<DbKeyRangeNode*>& ranges,
+	jrd_rel* relation, RecordNumber& lowerBound, RecordNumber& upperBound)
+{
+/**************************************
+*
+*      E V L _ d b k e y _ b o u n d s
+*
+**************************************
+*
+* Functional description
+*      Evaluate DBKEY ranges and find lower/upper bounds.
+*
+**************************************/
+	SET_TDBB(tdbb);
+
+	jrd_req* const request = tdbb->getRequest();
+
+	for (const auto node : ranges)
+	{
+		if (node->lower)
+		{
+			const auto desc = EVL_expr(tdbb, request, node->lower);
+
+			if (!(request->req_flags & req_null) &&
+				desc && (desc->isText() || desc->isDbKey()))
+			{
+				UCHAR* ptr = NULL;
+				const auto length = MOV_get_string(tdbb, desc, &ptr, NULL, 0);
+
+				if (length == sizeof(RecordNumber::Packed))
+				{
+					Aligner<RecordNumber::Packed> alignedNumber(ptr, length);
+					const auto dbkey = (const RecordNumber::Packed*) alignedNumber;
+
+					if (dbkey->bid_relation_id == relation->rel_id)
+					{
+						RecordNumber recno;
+						recno.bid_decode(dbkey);
+						// Decrement the value in order to switch back to the zero based numbering
+						recno.decrement();
+						recno.setValid(true);
+
+						if ((!lowerBound.isValid() || recno > lowerBound) &&
+							recno.getValue() > BOF_NUMBER)
+						{
+							lowerBound = recno;
+						}
+					}
+				}
+			}
+		}
+
+		if (node->upper)
+		{
+			const auto desc = EVL_expr(tdbb, request, node->upper);
+
+			if (!(request->req_flags & req_null) &&
+				desc && (desc->isText() || desc->isDbKey()))
+			{
+				UCHAR* ptr = NULL;
+				const auto length = MOV_get_string(tdbb, desc, &ptr, NULL, 0);
+
+				if (length == sizeof(RecordNumber::Packed))
+				{
+					Aligner<RecordNumber::Packed> alignedNumber(ptr, length);
+					const auto dbkey = (const RecordNumber::Packed*) alignedNumber;
+
+					if (dbkey->bid_relation_id == relation->rel_id)
+					{
+						RecordNumber recno;
+						recno.bid_decode(dbkey);
+						// Decrement the value in order to switch back to the zero based numbering
+						recno.decrement();
+						recno.setValid(true);
+
+						if ((!upperBound.isValid() || recno < upperBound) &&
+							recno.getValue() > BOF_NUMBER)
+						{
+							upperBound = recno;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+
 bool EVL_field(jrd_rel* relation, Record* record, USHORT id, dsc* desc)
 {
 /**************************************
@@ -440,6 +528,7 @@ void EVL_make_value(thread_db* tdbb, const dsc* desc, impure_value* value, Memor
 		value->vlu_misc.vlu_sql_time = *(GDS_TIME*) from.dsc_address;
 		return;
 
+	case dtype_ex_time_tz:
 	case dtype_sql_time_tz:
 		value->vlu_misc.vlu_sql_time_tz = *(ISC_TIME_TZ*) from.dsc_address;
 		return;
@@ -452,6 +541,7 @@ void EVL_make_value(thread_db* tdbb, const dsc* desc, impure_value* value, Memor
 		value->vlu_misc.vlu_timestamp = *(GDS_TIMESTAMP*) from.dsc_address;
 		return;
 
+	case dtype_ex_timestamp_tz:
 	case dtype_timestamp_tz:
 		value->vlu_misc.vlu_timestamp_tz = *(ISC_TIMESTAMP_TZ*) from.dsc_address;
 		return;

@@ -36,6 +36,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   # Without a byte order mark (BOM), Visual Studio assumes that the source
   # file is encoded using the current user code page, so we specify UTF-8.
   add_compile_options(/utf-8)
+  # allow multi-processor compilation
+  add_compile_options(/MP)
 elseif(CYGWIN OR MINGW)
   # See https://stackoverflow.com/questions/38139631 for details.
   add_compile_options(-std=gnu++11)

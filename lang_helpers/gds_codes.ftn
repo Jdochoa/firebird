@@ -1940,6 +1940,14 @@ C --
       PARAMETER (GDS__cannot_read_new_blob             = 335545263)
       INTEGER*4 GDS__dyn_no_create_priv              
       PARAMETER (GDS__dyn_no_create_priv               = 335545264)
+      INTEGER*4 GDS__suspend_without_returns         
+      PARAMETER (GDS__suspend_without_returns          = 335545265)
+      INTEGER*4 GDS__truncate_warn                   
+      PARAMETER (GDS__truncate_warn                    = 335545266)
+      INTEGER*4 GDS__truncate_monitor                
+      PARAMETER (GDS__truncate_monitor                 = 335545267)
+      INTEGER*4 GDS__truncate_context                
+      PARAMETER (GDS__truncate_context                 = 335545268)
       INTEGER*4 GDS__gfix_db_name                    
       PARAMETER (GDS__gfix_db_name                     = 335740929)
       INTEGER*4 GDS__gfix_invalid_sw                 

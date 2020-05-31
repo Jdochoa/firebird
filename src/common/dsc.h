@@ -43,7 +43,7 @@ inline bool DTYPE_IS_TEXT(UCHAR d)
 
 inline bool DTYPE_IS_DATE(UCHAR t)
 {
-	return (t >= dtype_sql_date && t <= dtype_timestamp) || t == dtype_sql_time_tz || t == dtype_timestamp_tz;
+	return (t >= dtype_sql_date && t <= dtype_timestamp) || (t >= dtype_sql_time_tz && t <= dtype_ex_timestamp_tz);
 }
 
 // DTYPE_IS_BLOB includes both BLOB and ARRAY since array's are implemented over blobs.
@@ -71,7 +71,7 @@ inline bool DTYPE_IS_APPROX(UCHAR d)
 
 inline bool DTYPE_IS_DECFLOAT(UCHAR d)
 {
-	return d == dtype_dec128 || d  == dtype_dec64;
+	return d == dtype_dec128 || d == dtype_dec64;
 }
 
 inline bool DTYPE_IS_NUMERIC(UCHAR d)
@@ -161,13 +161,12 @@ typedef struct dsc
 
 	bool isDateTime() const
 	{
-		return (dsc_dtype >= dtype_sql_date && dsc_dtype <= dtype_timestamp) ||
-			dsc_dtype == dtype_sql_time_tz || dsc_dtype == dtype_timestamp_tz;
+		return DTYPE_IS_DATE(dsc_dtype);
 	}
 
 	bool isDateTimeTz() const
 	{
-		return dsc_dtype == dtype_sql_time_tz || dsc_dtype == dtype_timestamp_tz;
+		return dsc_dtype >= dtype_sql_time_tz && dsc_dtype <= dtype_ex_timestamp_tz;
 	}
 
 	bool isDate() const
@@ -177,12 +176,12 @@ typedef struct dsc
 
 	bool isTime() const
 	{
-		return dsc_dtype == dtype_sql_time || dsc_dtype == dtype_sql_time_tz;
+		return dsc_dtype == dtype_sql_time || dsc_dtype == dtype_sql_time_tz || dsc_dtype == dtype_ex_time_tz;
 	}
 
 	bool isTimeStamp() const
 	{
-		return dsc_dtype == dtype_timestamp || dsc_dtype == dtype_timestamp_tz;
+		return dsc_dtype == dtype_timestamp || dsc_dtype == dtype_timestamp_tz || dsc_dtype == dtype_ex_timestamp_tz;
 	}
 
 	bool isDecFloat() const
@@ -317,6 +316,14 @@ typedef struct dsc
 		dsc_address = (UCHAR*) address;
 	}
 
+	void makeDbkey(void* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_dbkey;
+		dsc_length = sizeof(ISC_QUAD);
+		dsc_address = (UCHAR*) address;
+	}
+
 	void makeDouble(double* address = NULL)
 	{
 		clear();
@@ -423,6 +430,15 @@ typedef struct dsc
 		dsc_address = (UCHAR*) address;
 	}
 
+	void makeTimeTzEx(ISC_TIME_TZ_EX* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_ex_time_tz;
+		dsc_length = sizeof(ISC_TIME_TZ_EX);
+		dsc_scale = 0;
+		dsc_address = (UCHAR*) address;
+	}
+
 	void makeTimestamp(GDS_TIMESTAMP* address = NULL)
 	{
 		clear();
@@ -437,6 +453,15 @@ typedef struct dsc
 		clear();
 		dsc_dtype = dtype_timestamp_tz;
 		dsc_length = sizeof(ISC_TIMESTAMP_TZ);
+		dsc_scale = 0;
+		dsc_address = (UCHAR*) address;
+	}
+
+	void makeTimestampTzEx(ISC_TIMESTAMP_TZ_EX* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_ex_timestamp_tz;
+		dsc_length = sizeof(ISC_TIMESTAMP_TZ_EX);
 		dsc_scale = 0;
 		dsc_address = (UCHAR*) address;
 	}

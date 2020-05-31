@@ -693,6 +693,71 @@ Example:
     select lpad(x, 10) from y;
 
 
+----------
+MAKE_DBKEY
+----------
+
+Function:
+    MAKE_DBKEY( relation, recnum [, dpnum [, ppnum]] )
+    Creates DBKEY value using relation name or ID, record number, and, optionally,
+    logical number of data page and pointer page.
+
+Format:
+    MAKE_DBKEY( <value>, <number> [, <number> [, <number>]] )
+
+Notes:
+    1) If the first argument (relation) is a string expression or literal, then
+       it's treated as a relation name and the engine searches for the
+       corresponding relation ID. The search is case-sensitive.
+       In the case of string literal, relation ID is evaluated at prepare time. 
+       In the case of expression, relation ID is evaluated at execution time. 
+       If the relation couldn't be found, then isc_relnotdef error is raised.
+    2) If the first argument (relation) is a numeric expression or literal, then 
+       it's treated as a relation ID and used "as is", without verification
+       against existing relations.
+       If the argument value is negative or greater than the maximum allowed
+       relation ID (65535 currently), then NULL is returned.
+    3) Second argument (recnum) represents an absolute record number in relation 
+       (if the next arguments -- dpnum and ppnum -- are missing), or a record
+       number relative to the first record, specified by the next arguments.
+    4) Third argument (dpnum) is a logical number of data page in relation (if 
+       the next argument -- ppnum -- is missing), or number of data page
+       relative to the first data page addressed by the given ppnum.
+    5) Forth argument (ppnum) is a logical number of pointer page in relation.
+    6) All numbers are zero-based. 
+	   Maximum allowed value for dpnum and ppnum is 2^32 (4294967296).
+	   If dpnum is specified, then recnum could be negative.
+	   If dpnum is missing and recnum is negative then NULL is returned.
+	   If ppnum is specified, then dpnum could be negative.
+	   If ppnum is missing and dpnum is negative then NULL is returned.
+    7) If any of specified arguments has NULL value, the result is also NULL.
+	8) First argument (relation) is described as INTEGER but could be overriden
+	   by application as VARCHAR or CHAR.
+	   recnum, dpnum and ppnum are described as BIGINT (64-bit signed integer).
+
+Examples:
+
+	1) Select record using relation name (note, relation name is in uppercase)
+
+		select * from rdb$relations where rdb$db_key = make_dbkey('RDB$RELATIONS', 0)
+
+	2) Select record using relation ID
+
+		select * from rdb$relations where rdb$db_key = make_dbkey(6, 0)
+
+	3) Select all records that physically reside at first data page in relation
+
+		select * from rdb$relations
+		 where rdb$db_key >= make_dbkey(6, 0, 0)
+		   and rdb$db_key <  make_dbkey(6, 0, 1)
+
+	4) Select all records that physically reside at first data page of 6th pointer 
+	   page at relation
+
+		select * from SOMETABLE
+		 where rdb$db_key >= make_dbkey('SOMETABLE', 0, 0, 5)
+		   and rdb$db_key <  make_dbkey('SOMETABLE', 0, 1, 5)
+
 --------
 MAXVALUE
 --------

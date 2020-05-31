@@ -72,6 +72,8 @@
 #define blr_int128			(unsigned char)26
 #define blr_sql_time_tz		(unsigned char)28
 #define blr_timestamp_tz	(unsigned char)29
+#define blr_ex_time_tz		(unsigned char)30
+#define blr_ex_timestamp_tz	(unsigned char)31
 
 // first sub parameter for blr_domain_name[2]
 #define blr_domain_type_of	(unsigned char)0
@@ -215,8 +217,9 @@
 #define blr_index		(unsigned char)107
 #define blr_ansi_like		(unsigned char)108
 #define blr_scrollable		(unsigned char) 109
+#define blr_lateral_rse		(unsigned char) 110
 
-// unused codes: 110..117
+// unused codes: 111..117
 
 #define blr_run_count		(unsigned char)118	/* changed from 88 to avoid conflict with blr_parameter3 */
 #define blr_rs_stream		(unsigned char)119
@@ -440,5 +443,7 @@
 // subcodes of blr_at
 #define blr_at_local				(unsigned char) 0
 #define blr_at_zone					(unsigned char) 1
+
+#define blr_marks					(unsigned char) 217		// mark some blr code with specific flags
 
 #endif // FIREBIRD_IMPL_BLR_H

@@ -488,7 +488,7 @@ void INF_database_info(thread_db* tdbb,
 
 		case isc_info_creation_date:
 			{
-				const ISC_TIMESTAMP ts = TimeZoneUtil::cvtTimeStampTzToTimeStamp(
+				const ISC_TIMESTAMP ts = TimeZoneUtil::timeStampTzToTimeStamp(
 					dbb->dbb_creation_date, &EngineCallbacks::instance);
 
 				length = INF_convert(ts.timestamp_date, p);

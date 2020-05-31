@@ -44,6 +44,7 @@
 */
 
 #include "firebird.h"
+#include <cmath>
 #include <stdio.h>
 #include "../jrd/intl.h"
 #include <stdlib.h>
@@ -441,6 +442,8 @@ static int Exit_value = 0;
 static bool Interactive = true;
 static bool Input_file = false;
 
+static const char* DEFAULT_DML_TRANS_SQL = "SET TRANSACTION";
+static Firebird::GlobalPtr<Firebird::string> TranParams;
 
 // Values used in the SET command.
 // Initial options set exclusively from the command line are not included here.
@@ -468,6 +471,8 @@ public:
 		BailOnError = false;
 		StmtTimeout = 0;
 		ISQL_charset[0] = 0;
+		KeepTranParams = true;
+		TranParams->assign(DEFAULT_DML_TRANS_SQL);
 	}
 
 	ColList global_Cols;
@@ -489,6 +494,7 @@ public:
 	bool BailOnError;
 	unsigned int StmtTimeout;
 	SCHAR ISQL_charset[MAXCHARSET_SIZE];
+	bool KeepTranParams;
 };
 
 static SetValues setValues;
@@ -586,6 +592,17 @@ static bool startTransaction(Firebird::ITransaction** t, unsigned len = 0, const
 
 static bool M_Transaction()
 {
+	if (DB && !M__trans && setValues.KeepTranParams)
+	{
+		M__trans = DB->execute(fbStatus, nullptr,
+							   TranParams->length(), TranParams->c_str(),
+							   isqlGlob.SQL_dialect, nullptr, nullptr, nullptr, nullptr);
+
+		if (ISQL_errmsg(fbStatus))
+			return false;
+
+		return DB != NULL;
+	}
 	return startTransaction(&M__trans);
 }
 
@@ -1028,6 +1045,8 @@ bool ISQL_errmsg(Firebird::IStatus* st)
 		if (state & Firebird::IStatus::STATE_WARNINGS)
 		{
 			const ISC_STATUS* w = st->getWarnings();
+			TEXT* err = errbuf;
+			unsigned es = sizeof(errbuf);
 			while (fb_interpret(err, es, &w)) {
 				STDERROUT(errbuf);
 				if (err == errbuf)
@@ -2458,6 +2477,27 @@ static processing_state add_row(TEXT* tabname)
 					}
 					break;
 
+				case SQL_TIME_TZ_EX:
+				case SQL_TIME_TZ:
+					{
+						Firebird::string tmp(lastInputLine, length);
+						unsigned hours, minutes, seconds;
+						char timeZone[TimeZoneUtil::MAX_SIZE];
+						fb_assert(TimeZoneUtil::MAX_SIZE - 1 == 32);
+						if (3 > sscanf(tmp.c_str(), "%u:%u:%u %32s", &hours, &minutes, &seconds, timeZone))
+						{
+							IUTILS_msg_get(TIME_ERR, txt, SafeArg() << tmp.c_str());
+							STDERROUT(txt);	// Bad time %s\n
+							done = true;
+						}
+
+						Firebird::UtilInterfacePtr()->encodeTimeTz(fbStatus,
+							(ISC_TIME_TZ*) datap, hours, minutes, seconds, 0, timeZone);
+						if (ISQL_errmsg(fbStatus))
+							done = true;
+					}
+					break;
+
 				case SQL_TIMESTAMP:
 					if (6 <= sscanf(lastInputLine, "%d/%d/%d %d:%d:%d.%4s",
 									&times.tm_year, &times.tm_mon, &times.tm_mday,
@@ -2495,6 +2535,29 @@ static processing_state add_row(TEXT* tabname)
 						ISC_TIMESTAMP* datetime = (ISC_TIMESTAMP*) datap;
 						isc_encode_timestamp(&times, datetime);
 						datetime->timestamp_time += msec;
+					}
+					break;
+
+				case SQL_TIMESTAMP_TZ_EX:
+				case SQL_TIMESTAMP_TZ:
+					{
+						Firebird::string tmp(lastInputLine, length);
+						unsigned year, month, day;
+						unsigned hours, minutes, seconds, fractions;
+						char timeZone[TimeZoneUtil::MAX_SIZE];
+						fb_assert(TimeZoneUtil::MAX_SIZE - 1 == 32);
+						if (7 > sscanf(tmp.c_str(), "%u-%u-%u %u:%u:%u.%u %32s", &year, &month, &day,
+							&hours, &minutes, &seconds, &fractions, timeZone))
+						{
+							IUTILS_msg_get(TIMESTAMP_ERR, txt, SafeArg() << tmp.c_str());
+							STDERROUT(txt);	// Bad time %s\n
+							done = true;
+						}
+
+						Firebird::UtilInterfacePtr()->encodeTimeStampTz(fbStatus,
+							(ISC_TIMESTAMP_TZ*) datap, year, month, day, hours, minutes, seconds, fractions, timeZone);
+						if (ISQL_errmsg(fbStatus))
+							done = true;
 					}
 					break;
 
@@ -3252,6 +3315,27 @@ static processing_state bulk_insert_hack(const char* command)
 					}
 					break;
 
+				case SQL_TIME_TZ_EX:
+				case SQL_TIME_TZ:
+					{
+						Firebird::string tmp(lastPos, length);
+						unsigned hours, minutes, seconds;
+						char timeZone[TimeZoneUtil::MAX_SIZE];
+						fb_assert(TimeZoneUtil::MAX_SIZE - 1 == 32);
+						if (3 > sscanf(tmp.c_str(), "%u:%u:%u %32s", &hours, &minutes, &seconds, timeZone))
+						{
+							IUTILS_msg_get(TIME_ERR, msg, SafeArg() << tmp.c_str());
+							STDERROUT(msg);	// Bad time %s\n
+							done = true;
+						}
+
+						Firebird::UtilInterfacePtr()->encodeTimeTz(fbStatus,
+							(ISC_TIME_TZ*) datap, hours, minutes, seconds, 0, timeZone);
+						if (ISQL_errmsg(fbStatus))
+							done = true;
+					}
+					break;
+
 				case SQL_TIMESTAMP:
 					if (6 <= sscanf(lastPos, "%d-%d-%d %d:%d:%d.%4s",
 									&times.tm_year, &times.tm_mon, &times.tm_mday,
@@ -3290,6 +3374,29 @@ static processing_state bulk_insert_hack(const char* command)
 						ISC_TIMESTAMP* datetime = (ISC_TIMESTAMP*) datap;
 						isc_encode_timestamp(&times, datetime);
 						datetime->timestamp_time += msec;
+					}
+					break;
+
+				case SQL_TIMESTAMP_TZ_EX:
+				case SQL_TIMESTAMP_TZ:
+					{
+						Firebird::string tmp(lastPos, length);
+						unsigned year, month, day;
+						unsigned hours, minutes, seconds, fractions;
+						char timeZone[TimeZoneUtil::MAX_SIZE];
+						fb_assert(TimeZoneUtil::MAX_SIZE - 1 == 32);
+						if (7 > sscanf(tmp.c_str(), "%u-%u-%u %u:%u:%u.%u %32s", &year, &month, &day,
+							&hours, &minutes, &seconds, &fractions, timeZone))
+						{
+							IUTILS_msg_get(TIMESTAMP_ERR, msg, SafeArg() << tmp.c_str());
+							STDERROUT(msg);	// Bad time %s\n
+							done = true;
+						}
+
+						Firebird::UtilInterfacePtr()->encodeTimeStampTz(fbStatus,
+							(ISC_TIMESTAMP_TZ*) datap, year, month, day, hours, minutes, seconds, fractions, timeZone);
+						if (ISQL_errmsg(fbStatus))
+							done = true;
 					}
 					break;
 
@@ -4949,6 +5056,7 @@ static processing_state frontend_set(const char* cmd, const char* const* parms,
 //#endif
 			sql, warning, sqlCont, heading, bail,
 			bulk_insert, maxrows, stmtTimeout,
+			keepTranParams,
 			wrong
 		};
 		SetOptions(const optionsMap* inmap, size_t insize, int wrongval)
@@ -4989,6 +5097,7 @@ static processing_state frontend_set(const char* cmd, const char* const* parms,
 		{SetOptions::sqlCont, "TRUSTED", 0},	// TRUSTED ROLE, will get DSQL error other case
 		{SetOptions::stmtTimeout, "LOCAL_TIMEOUT", 0},
 		{SetOptions::sqlCont, "DECFLOAT", 0},
+		{SetOptions::keepTranParams, "KEEP_TRAN_PARAMS", 9},
 	};
 
 	// Display current set options
@@ -5164,6 +5273,16 @@ static processing_state frontend_set(const char* cmd, const char* const* parms,
 				ret = SKIP;
 			}
 		}
+		break;
+
+	case SetOptions::keepTranParams:
+		{
+			const bool oldValue = setValues.KeepTranParams;
+			ret = do_set_command(parms[2], &setValues.KeepTranParams);
+			if ((ret != ps_ERR) && (oldValue != setValues.KeepTranParams))
+				TranParams->assign(setValues.KeepTranParams ? DEFAULT_DML_TRANS_SQL : "");
+		}
+
 		break;
 
 	default:
@@ -5997,6 +6116,9 @@ static processing_state print_sets()
 	print_set("Warnings:", setValues.Warnings);
 	print_set("Bail on error:", setValues.BailOnError);
 	isqlGlob.printf("%-25s%lu%s", "Local statement timeout:", setValues.StmtTimeout, NEWLINE);
+	print_set("Keep transaction params:", setValues.KeepTranParams);
+	if (setValues.KeepTranParams)
+		isqlGlob.printf("    %s%s", TranParams->c_str(), NEWLINE);
 	return SKIP;
 }
 
@@ -6668,6 +6790,9 @@ static processing_state newtrans(const TEXT* statement)
 		return FAIL;
 	}
 
+	if (setValues.KeepTranParams)
+		TranParams->assign(statement);
+
 	return SKIP;
 }
 
@@ -7104,9 +7229,9 @@ static bool checkSpecial(TEXT* const p, const int length, const double value)
  *
  **************************************/
 	const TEXT* t = NULL;
-	if (isnan(value))
+	if (std::isnan(value))
 		t = "NaN";
-	else if (isinf(value))
+	else if (std::isinf(value))
 		t = Firebird::isNegativeInf(value) ? "-Infinity" : "Infinity";
 	else
 		return false;
@@ -7527,12 +7652,21 @@ static unsigned print_item(TEXT** s, const IsqlVar* var, const unsigned length)
 			}
 
 		case SQL_TIMESTAMP_TZ:
+		case SQL_TIMESTAMP_TZ_EX:
 			{
 				unsigned year, month, day, hours, minutes, seconds, fractions;
 				char timeZone[TimeZoneUtil::MAX_SIZE];
 
-				Firebird::UtilInterfacePtr()->decodeTimeStampTz(fbStatus, var->value.asDateTimeTz,
-					&year, &month, &day, &hours, &minutes, &seconds, &fractions, sizeof(timeZone), timeZone);
+				if (dtype == SQL_TIMESTAMP_TZ)
+				{
+					Firebird::UtilInterfacePtr()->decodeTimeStampTz(fbStatus, var->value.asDateTimeTz,
+						&year, &month, &day, &hours, &minutes, &seconds, &fractions, sizeof(timeZone), timeZone);
+				}
+				else
+				{
+					Firebird::UtilInterfacePtr()->decodeTimeStampTzEx(fbStatus, var->value.asDateTimeTzEx,
+						&year, &month, &day, &hours, &minutes, &seconds, &fractions, sizeof(timeZone), timeZone);
+				}
 
 				if (ISQL_errmsg(fbStatus))
 					return ps_ERR;
@@ -7566,12 +7700,21 @@ static unsigned print_item(TEXT** s, const IsqlVar* var, const unsigned length)
 			}
 
 		case SQL_TIME_TZ:
+		case SQL_TIME_TZ_EX:
 			{
 				unsigned hours, minutes, seconds, fractions;
 				char timeZone[TimeZoneUtil::MAX_SIZE];
 
-				Firebird::UtilInterfacePtr()->decodeTimeTz(fbStatus, var->value.asTimeTz, &hours, &minutes, &seconds,
-					&fractions, sizeof(timeZone), timeZone);
+				if (dtype == SQL_TIME_TZ)
+				{
+					Firebird::UtilInterfacePtr()->decodeTimeTz(fbStatus, var->value.asTimeTz, &hours, &minutes, &seconds,
+						&fractions, sizeof(timeZone), timeZone);
+				}
+				else
+				{
+					Firebird::UtilInterfacePtr()->decodeTimeTzEx(fbStatus, var->value.asTimeTzEx, &hours, &minutes, &seconds,
+						&fractions, sizeof(timeZone), timeZone);
+				}
 
 				if (ISQL_errmsg(fbStatus))
 					return ps_ERR;
@@ -8241,12 +8384,14 @@ static unsigned process_message_display(Firebird::IMessageMetadata* message, uns
 				disp_length = DATE_ONLY_LEN;
 			break;
 		case SQL_TIMESTAMP_TZ:
+		case SQL_TIMESTAMP_TZ_EX:
 			disp_length = DATETIME_TZ_LEN;
 			break;
 		case SQL_TYPE_TIME:
 			disp_length = TIME_ONLY_LEN;
 			break;
 		case SQL_TIME_TZ:
+		case SQL_TIME_TZ_EX:
 			disp_length = TIME_TZ_ONLY_LEN;
 			break;
 		case SQL_TYPE_DATE:
@@ -8765,6 +8910,9 @@ static processing_state process_statement(const TEXT* str2)
 				break;
 			}
 
+			// check for warnings
+			ISQL_warning(fbStatus);
+
 			ret = print_line(message, buffer, pad, line);
 		}
 
@@ -8951,12 +9099,16 @@ static const char* sqltype_to_string(unsigned sqltype)
 		return "TIMESTAMP";
 	case SQL_TIMESTAMP_TZ:
 		return "TIMESTAMP WITH TIME ZONE";
+	case SQL_TIMESTAMP_TZ_EX:
+		return "EXTENDED TIMESTAMP WITH TIME ZONE";
 	case SQL_TYPE_DATE:
 		return "SQL DATE";
 	case SQL_TYPE_TIME:
 		return "TIME";
 	case SQL_TIME_TZ:
 		return "TIME WITH TIME ZONE";
+	case SQL_TIME_TZ_EX:
+		return "EXTENDED TIME WITH TIME ZONE";
 	case SQL_BLOB:
 		return "BLOB";
 	case SQL_ARRAY:

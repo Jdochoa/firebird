@@ -122,10 +122,6 @@ static char* fb_prefix_msg = NULL;
 
 #include "gen/msgs.h"
 
-#ifndef O_BINARY
-#define O_BINARY	0
-#endif
-
 const SLONG GENERIC_SQLCODE		= -999;
 
 #include "fb_types.h"

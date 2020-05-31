@@ -25,3 +25,4 @@ Only ones mentioned in this document could be used, but as necessities appears, 
 - [static_assert](http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2004/n1720.html)
 - [decltype](https://en.cppreference.com/w/cpp/language/decltype)
 - [std::is_convertible](https://en.cppreference.com/w/cpp/types/is_convertible)
+- [final specifier](https://en.cppreference.com/w/cpp/language/final)

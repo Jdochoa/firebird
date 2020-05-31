@@ -38,21 +38,15 @@ namespace Jrd {
 
 class Attachment;
 
-class EventManager : private Firebird::RefCounted, public Firebird::GlobalStorage, public Firebird::IpcObject
+class EventManager final : public Firebird::GlobalStorage, public Firebird::IpcObject
 {
-	typedef Firebird::GenericMap<Firebird::Pair<Firebird::Left<Firebird::string, EventManager*> > > DbEventMgrMap;
-
-	static Firebird::GlobalPtr<DbEventMgrMap> g_emMap;
-	static Firebird::GlobalPtr<Firebird::Mutex> g_mapMutex;
-
 	const int PID;
 
 public:
-	static void init(Attachment*);
-	static void destroy(EventManager*);
-
-	EventManager(const Firebird::string& id, Firebird::RefPtr<const Config> conf);
+	EventManager(const Firebird::string& id, const Config* conf);
 	~EventManager();
+
+	static void init(Attachment*);
 
 	void deleteSession(SLONG);
 
@@ -101,8 +95,8 @@ private:
 	prb* m_process;
 	SLONG m_processOffset;
 
-	Firebird::string m_dbId;
-	Firebird::RefPtr<const Config> m_config;
+	const Firebird::string& m_dbId;
+	const Config* const m_config;
 	Firebird::AutoPtr<Firebird::SharedMemory<evh> > m_sharedMemory;
 
 	Firebird::Semaphore m_startupSemaphore;

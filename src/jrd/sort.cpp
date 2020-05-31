@@ -825,7 +825,7 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 				((Decimal64*) p)->makeKey(lwp);
 				*p ^= 1 << 7;
 			}
-			else if (!(key->skd_flags & SKD_separate_data))
+			else if (duplicateHandling || !(key->skd_flags & SKD_separate_data))
 			{
 				if (complement && n)
 				{
@@ -847,7 +847,7 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 				((Decimal128*) p)->makeKey(lwp);
 				*p ^= 1 << 7;
 			}
-			else if (!(key->skd_flags & SKD_separate_data))
+			else if (duplicateHandling || !(key->skd_flags & SKD_separate_data))
 			{
 				if (complement && n)
 				{
@@ -1135,7 +1135,7 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 				((Decimal64*) p)->makeKey(lwp);
 				p[3] ^= 1 << 7;
 			}
-			else if (!(key->skd_flags & SKD_separate_data))
+			else if (duplicateHandling || !(key->skd_flags & SKD_separate_data))
 			{
 				if (complement && n)
 				{
@@ -1156,7 +1156,7 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 				((Decimal128*) p)->makeKey(lwp);
 				p[3] ^= 1 << 7;
 			}
-			else if (!(key->skd_flags & SKD_separate_data))
+			else if (duplicateHandling || !(key->skd_flags & SKD_separate_data))
 			{
 				if (complement && n)
 				{

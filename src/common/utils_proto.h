@@ -104,6 +104,15 @@ namespace fb_utils
 	bool isGlobalKernelPrefix();
 #endif
 
+	// Compare the absolute value of two SINT64 numbers.
+	// Return 0 if they are equal, <0 if n1 < n2 and >0 if n1 > n2.
+	inline int abs64Compare(SINT64 n1, SINT64 n2)
+	{
+		n1 = n1 > 0 ? -n1 : n1;
+		n2 = n2 > 0 ? -n2 : n2;
+		return n1 == n2 ? 0 : n1 < n2 ? 1 : -1;
+	}
+
 	Firebird::PathName get_process_name();
 	SLONG genUniqueId();
 	void getCwd(Firebird::PathName& pn);
@@ -144,7 +153,26 @@ namespace fb_utils
 	unsigned int subStatus(const ISC_STATUS* in, unsigned int cin,
 						   const ISC_STATUS* sub, unsigned int csub) throw();
 	bool cmpStatus(unsigned int len, const ISC_STATUS* a, const ISC_STATUS* b) throw();
-	const ISC_STATUS* nextArg(const ISC_STATUS* v) throw();
+	const ISC_STATUS* nextCode(const ISC_STATUS* v) throw();
+
+	inline unsigned nextArg(const ISC_STATUS v) throw()
+	{
+		return v == isc_arg_cstring ? 3 : 2;
+	}
+
+	inline bool isStr(const ISC_STATUS v) throw()
+	{
+		switch (v)
+		{
+		case isc_arg_cstring:
+		case isc_arg_string:
+		case isc_arg_interpreted:
+		case isc_arg_sql_state:
+			return true;
+		}
+
+		return false;
+	}
 
 	// Check does vector contain particular code or not
 	bool containsErrorCode(const ISC_STATUS* v, ISC_STATUS code);

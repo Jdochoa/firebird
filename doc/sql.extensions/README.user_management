@@ -1,4 +1,4 @@
-SQL Language Extension: CREATE/ALTER/CREATE_OR_ALTER/DROP USER
+SQL Language Extension: CREATE/ALTER/CREATE_OR_ALTER/RECREATE/DROP USER
 
    Implements capability to manage users from regular database attachment.
 
@@ -9,11 +9,11 @@ Author:
 
 Syntax is:
 
-   CREATE USER name [ options ] [ TAGS ( tag [, tag [, tag ...]] ) ]
-   ALTER USER name [ SET ] [ options ] [ TAGS ( tag [, tag [, tag ...]] ) ]
-   ALTER CURRENT USER [ SET ] [ options ] [ TAGS ( tag [, tag [, tag ...]] ) ]
-   CREATE OR ALTER USER name [ SET ] [ options ] [ TAGS ( tag [, tag [, tag ...]] ) ]
-   RECREATE USER name [ options ] [ TAGS ( tag [, tag [, tag ...]] ) ]
+   CREATE USER name [ options ];
+   ALTER USER name [ SET ] [ options ];
+   ALTER CURRENT USER [ SET ] [ options ];
+   CREATE OR ALTER USER name [ SET ] [ options ];
+   RECREATE USER name [ options ];
    DROP USER name [ USING PLUGIN name ];
 
 where OPTIONS is a list of following options:
@@ -24,6 +24,7 @@ where OPTIONS is a list of following options:
 - ACTIVE
 - INACTIVE
 - USING PLUGIN name
+- TAGS ( tag [, tag [, tag ...]] )
 
 and each TAG may have one of two forms:
  name = 'string value'

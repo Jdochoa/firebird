@@ -97,6 +97,7 @@ using namespace Firebird;
 static void check_class(thread_db*, jrd_tra*, record_param*, record_param*, USHORT);
 static bool check_nullify_source(thread_db*, record_param*, record_param*, int, int = -1);
 static void check_owner(thread_db*, jrd_tra*, record_param*, record_param*, USHORT);
+static void check_repl_state(thread_db*, jrd_tra*, record_param*, record_param*, USHORT);
 static bool check_user(thread_db*, const dsc*);
 static int check_precommitted(const jrd_tra*, const record_param*);
 static void check_rel_field_class(thread_db*, record_param*, jrd_tra*);
@@ -873,9 +874,10 @@ bool VIO_chase_record_version(thread_db* tdbb, record_param* rpb,
 				{
 					tdbb->bumpRelStats(RuntimeStatistics::RECORD_CONFLICTS, relation->rel_id);
 
+					// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
 					ERR_post(Arg::Gds(isc_deadlock) <<
 							 Arg::Gds(isc_read_conflict) <<
-							 Arg::Gds(isc_concurrent_transaction) << Arg::Num(rpb->rpb_transaction_nr));
+							 Arg::Gds(isc_concurrent_transaction) << Arg::Int64(rpb->rpb_transaction_nr));
 				}
 
 				// refetch the record and try again.  The active transaction
@@ -998,7 +1000,9 @@ bool VIO_chase_record_version(thread_db* tdbb, record_param* rpb,
 			if (!(transaction->tra_flags & TRA_ignore_limbo))
 			{
 				CCH_RELEASE(tdbb, &rpb->getWindow(tdbb));
-				ERR_post(Arg::Gds(isc_rec_in_limbo) << Arg::Num(rpb->rpb_transaction_nr));
+
+				// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
+				ERR_post(Arg::Gds(isc_rec_in_limbo) << Arg::Int64(rpb->rpb_transaction_nr));
 			}
 
 		case tra_active:
@@ -1441,7 +1445,57 @@ void VIO_data(thread_db* tdbb, record_param* rpb, MemoryPool* pool)
 }
 
 
-void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
+static bool check_prepare_result(int prepare_result, jrd_tra* transaction, jrd_req* request, record_param* rpb)
+{
+/**************************************
+ *
+ *	c h e c k _ p r e p a r e _ r e s u l t
+ *
+ **************************************
+ *
+ * Functional description
+ *	Called by VIO_modify and VIO_erase. Raise update conflict error if not in 
+ *  read consistency transaction or lock error happens or if request is already
+ *  in update conflict mode. In latter case set TRA_ex_restart flag to correctly
+ *  handle request restart.
+ *
+ **************************************/
+	if (prepare_result == PREPARE_OK)
+		return true;
+
+	jrd_req* top_request = request->req_snapshot.m_owner;
+
+	const bool restart_ready = top_request && 
+		(top_request->req_flags & req_restart_ready);
+
+	// Second update conflict when request is already in update conflict mode
+	// means we have some (indirect) UPDATE\DELETE in WHERE clause of primary 
+	// cursor. In this case all we can do is restart whole request immediately.
+	const bool secondary = top_request && 
+		(top_request->req_flags & req_update_conflict) && 
+		(prepare_result != PREPARE_LOCKERR);
+
+	if (!(transaction->tra_flags & TRA_read_consistency) || prepare_result == PREPARE_LOCKERR || 
+		secondary || !restart_ready)
+	{
+		if (secondary)
+			transaction->tra_flags |= TRA_ex_restart;
+
+		ERR_post(Arg::Gds(isc_deadlock) <<
+			Arg::Gds(isc_update_conflict) <<
+			Arg::Gds(isc_concurrent_transaction) << Arg::Int64(rpb->rpb_transaction_nr));
+	}
+
+	if (top_request)
+	{
+		top_request->req_flags |= req_update_conflict;
+		top_request->req_conflict_txn = rpb->rpb_transaction_nr;
+	}
+	return false;
+}
+
+
+bool VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 {
 /**************************************
  *
@@ -1497,7 +1551,7 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		// hvlad: what if record was created\modified by user tx also,
 		// i.e. if there is backversion ???
 		VIO_backout(tdbb, rpb, transaction);
-		return;
+		return true;
 	}
 
 	transaction->tra_flags |= TRA_write;
@@ -1552,6 +1606,10 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		case rel_dims:
 		case rel_filters:
 		case rel_vrel:
+		case rel_args:
+		case rel_packages:
+		case rel_charsets:
+		case rel_pubs:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			break;
 
@@ -1572,10 +1630,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 			}
 			break;
 
-		case rel_packages:
-			protect_system_table_delupd(tdbb, relation, "DELETE");
-			break;
-
 		case rel_procedures:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_prc_id, &desc2);
@@ -1588,10 +1642,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 
 			DFW_post_work(transaction, dfw_delete_procedure, &desc, id, package_name);
 			MET_lookup_procedure_id(tdbb, id, false, true, 0);
-			break;
-
-		case rel_charsets:
-			protect_system_table_delupd(tdbb, relation, "DELETE");
 			break;
 
 		case rel_collations:
@@ -1699,10 +1749,6 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 			DFW_post_work(transaction, dfw_delete_global, &desc2, 0);
 			break;
 
-		case rel_args:
-			protect_system_table_delupd(tdbb, relation, "DELETE");
-			break;
-
 		case rel_prc_prms:
 			protect_system_table_delupd(tdbb, relation, "DELETE");
 			EVL_field(0, rpb->rpb_record, f_prm_procedure, &desc);
@@ -1805,6 +1851,11 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 			DFW_post_work(transaction, dfw_grant, &desc, id);
 			break;
 
+		case rel_pub_tables:
+			protect_system_table_delupd(tdbb, relation, "DELETE");
+			DFW_post_work(transaction, dfw_change_repl_state, "", 1);
+			break;
+
 		default:    // Shut up compiler warnings
 			break;
 		}
@@ -1832,7 +1883,7 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 		if (transaction->tra_save_point && transaction->tra_save_point->isChanging())
 			verb_post(tdbb, transaction, rpb, rpb->rpb_undo);
 
-		return;
+		return true;
 	}
 
 	const bool backVersion = (rpb->rpb_b_page != 0);
@@ -1851,12 +1902,9 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 	{
 		// Update stub didn't find one page -- do a long, hard update
 		PageStack stack;
-		if (prepare_update(tdbb, transaction, tid_fetch, rpb, &temp, 0, stack, false))
-		{
-			ERR_post(Arg::Gds(isc_deadlock) <<
-					 Arg::Gds(isc_update_conflict) <<
-					 Arg::Gds(isc_concurrent_transaction) << Arg::Num(rpb->rpb_transaction_nr));
-		}
+		int prepare_result = prepare_update(tdbb, transaction, tid_fetch, rpb, &temp, 0, stack, false);
+		if (!check_prepare_result(prepare_result, transaction, request, rpb))
+			return false;
 
 		// Old record was restored and re-fetched for write.  Now replace it.
 
@@ -1915,6 +1963,7 @@ void VIO_erase(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 	{
 		notify_garbage_collector(tdbb, rpb, transaction->tra_number);
 	}
+	return true;
 }
 
 
@@ -2603,7 +2652,10 @@ bool VIO_get_current(thread_db* tdbb,
 
 		case tra_limbo:
 			if (!(transaction->tra_flags & TRA_ignore_limbo))
-				ERR_post(Arg::Gds(isc_rec_in_limbo) << Arg::Num(rpb->rpb_transaction_nr));
+			{
+				// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
+				ERR_post(Arg::Gds(isc_rec_in_limbo) << Arg::Int64(rpb->rpb_transaction_nr));
+			}
 			// fall thru
 
 		case tra_active:
@@ -2716,7 +2768,7 @@ void VIO_init(thread_db* tdbb)
 	}
 }
 
-void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, jrd_tra* transaction)
+bool VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, jrd_tra* transaction)
 {
 /**************************************
  *
@@ -2782,7 +2834,7 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 	{
 		VIO_update_in_place(tdbb, transaction, org_rpb, new_rpb);
 		tdbb->bumpRelStats(RuntimeStatistics::RECORD_UPDATES, relation->rel_id);
-		return;
+		return true;
 	}
 
 	check_gbak_cheating_insupd(tdbb, relation, "UPDATE");
@@ -2794,6 +2846,8 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 
 	if (needDfw(tdbb, transaction))
 	{
+		const SLONG nullLinger = 0;
+
 		switch ((RIDS) relation->rel_id)
 		{
 		case rel_segments:
@@ -2805,6 +2859,8 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		case rel_prc_prms:
 		case rel_auth_mapping:
 		case rel_roles:
+		case rel_ccon:
+		case rel_pub_tables:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
 			break;
 
@@ -2832,19 +2888,15 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 			protect_system_table_delupd(tdbb, relation, "UPDATE", true);
 			break;
 
-		case rel_ccon:
-			protect_system_table_delupd(tdbb, relation, "UPDATE");
-			break;
-
 		case rel_database:
 			protect_system_table_delupd(tdbb, relation, "UPDATE");
 			check_class(tdbb, transaction, org_rpb, new_rpb, f_dat_class);
-			EVL_field(0, org_rpb->rpb_record, f_dat_linger, &desc1);
-			EVL_field(0, new_rpb->rpb_record, f_dat_linger, &desc2);
+			if (!EVL_field(0, org_rpb->rpb_record, f_dat_linger, &desc1))
+				desc1.makeLong(0, const_cast<SLONG*>(&nullLinger));
+			if (!EVL_field(0, new_rpb->rpb_record, f_dat_linger, &desc2))
+				desc2.makeLong(0, const_cast<SLONG*>(&nullLinger));
 			if (MOV_compare(tdbb, &desc1, &desc2))
-			{
 				DFW_post_work(transaction, dfw_set_linger, &desc2, 0);
-			}
 			break;
 
 		case rel_relations:
@@ -2944,7 +2996,7 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 					bool rc4 = EVL_field(NULL, new_rpb->rpb_record, f_rfr_sname, &desc4);
 
 					if ((rc2 && MOV_get_long(tdbb, &desc2, 0) != 0) ||
-						(rc3 && rc4 && MOV_compare(tdbb, &desc3, &desc4) != 0))
+						(rc3 && rc4 && MOV_compare(tdbb, &desc3, &desc4)))
 					{
 						EVL_field(0, new_rpb->rpb_record, f_rfr_rname, &desc1);
 						EVL_field(0, new_rpb->rpb_record, f_rfr_id, &desc2);
@@ -3091,6 +3143,12 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 			check_owner(tdbb, transaction, org_rpb, new_rpb, f_xcp_owner);
 			break;
 
+		case rel_pubs:
+			protect_system_table_delupd(tdbb, relation, "UPDATE");
+			check_owner(tdbb, transaction, org_rpb, new_rpb, f_pub_owner);
+			check_repl_state(tdbb, transaction, org_rpb, new_rpb, f_pub_active_flag);
+			break;
+
 		default:
 			break;
 		}
@@ -3133,19 +3191,16 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 		}
 
 		tdbb->bumpRelStats(RuntimeStatistics::RECORD_UPDATES, relation->rel_id);
-		return;
+		return true;
 	}
 
 	const bool backVersion = (org_rpb->rpb_b_page != 0);
 	record_param temp;
 	PageStack stack;
-	if (prepare_update(tdbb, transaction, org_rpb->rpb_transaction_nr, org_rpb, &temp, new_rpb,
-					   stack, false))
-	{
-		ERR_post(Arg::Gds(isc_deadlock) <<
-				 Arg::Gds(isc_update_conflict) <<
-				 Arg::Gds(isc_concurrent_transaction) << Arg::Num(org_rpb->rpb_transaction_nr));
-	}
+	int prepare_result = prepare_update(tdbb, transaction, org_rpb->rpb_transaction_nr, org_rpb, 
+										&temp, new_rpb, stack, false);
+	if (!check_prepare_result(prepare_result, transaction, tdbb->getRequest(), org_rpb))
+		return false;
 
 	IDX_modify_flag_uk_modified(tdbb, org_rpb, new_rpb, transaction);
 
@@ -3194,6 +3249,7 @@ void VIO_modify(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb, j
 	{
 		notify_garbage_collector(tdbb, org_rpb, transaction->tra_number);
 	}
+	return true;
 }
 
 
@@ -3379,9 +3435,10 @@ bool VIO_refetch_record(thread_db* tdbb, record_param* rpb, jrd_tra* transaction
 	{
 		tdbb->bumpRelStats(RuntimeStatistics::RECORD_CONFLICTS, rpb->rpb_relation->rel_id);
 
+		// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
 		ERR_post(Arg::Gds(isc_deadlock) <<
 				 Arg::Gds(isc_update_conflict) <<
-				 Arg::Gds(isc_concurrent_transaction) << Arg::Num(rpb->rpb_transaction_nr));
+				 Arg::Gds(isc_concurrent_transaction) << Arg::Int64(rpb->rpb_transaction_nr));
 	}
 
 	return true;
@@ -3730,6 +3787,17 @@ void VIO_store(thread_db* tdbb, record_param* rpb, jrd_tra* transaction)
 							f_backup_id, drq_g_nxt_nbakhist_id, "RDB$BACKUP_HISTORY");
 			break;
 
+		case rel_pubs:
+			protect_system_table_insert(tdbb, request, relation);
+			set_system_flag(tdbb, rpb->rpb_record, f_pub_sys_flag);
+			set_owner_name(tdbb, rpb->rpb_record, f_pub_owner);
+			break;
+
+		case rel_pub_tables:
+			protect_system_table_insert(tdbb, request, relation);
+			DFW_post_work(transaction, dfw_change_repl_state, "", 1);
+			break;
+
 		default:    // Shut up compiler warnings
 			break;
 		}
@@ -3993,15 +4061,33 @@ bool VIO_writelock(thread_db* tdbb, record_param* org_rpb, jrd_tra* transaction)
 	{
 		case PREPARE_CONFLICT:
 		case PREPARE_DELETE:
+			if ((transaction->tra_flags & TRA_read_consistency))
+			{
+				jrd_req* top_request = tdbb->getRequest()->req_snapshot.m_owner;
+				if (top_request && !(top_request->req_flags & req_update_conflict))
+				{
+					if (!(top_request->req_flags & req_restart_ready))
+					{
+						ERR_post(Arg::Gds(isc_deadlock) <<
+								 Arg::Gds(isc_update_conflict) <<
+								 Arg::Gds(isc_concurrent_transaction) << Arg::Int64(org_rpb->rpb_transaction_nr));
+					}
+
+					top_request->req_flags |= req_update_conflict;
+					top_request->req_conflict_txn = org_rpb->rpb_transaction_nr;
+				}
+			}
 			org_rpb->rpb_runtime_flags |= RPB_refetch;
 			return false;
 		case PREPARE_LOCKERR:
 			// We got some kind of locking error (deadlock, timeout or lock_conflict)
 			// Error details should be stuffed into status vector at this point
 			// hvlad: we have no details as TRA_wait has already cleared the status vector
+
+			// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
 			ERR_post(Arg::Gds(isc_deadlock) <<
-					 Arg::Gds(isc_update_conflict) <<
-					 Arg::Gds(isc_concurrent_transaction) << Arg::Num(org_rpb->rpb_transaction_nr));
+						Arg::Gds(isc_update_conflict) <<
+						Arg::Gds(isc_concurrent_transaction) << Arg::Int64(org_rpb->rpb_transaction_nr));
 	}
 
 	// Old record was restored and re-fetched for write.  Now replace it.
@@ -4106,7 +4192,9 @@ static void check_rel_field_class(thread_db* tdbb,
 
 static void check_class(thread_db* tdbb,
 						jrd_tra* transaction,
-						record_param* old_rpb, record_param* new_rpb, USHORT id)
+						record_param* org_rpb,
+						record_param* new_rpb,
+						USHORT id)
 {
 /**************************************
  *
@@ -4122,16 +4210,23 @@ static void check_class(thread_db* tdbb,
  **************************************/
 	SET_TDBB(tdbb);
 
-	DSC desc1, desc2;
-	EVL_field(0, old_rpb->rpb_record, id, &desc1);
-	EVL_field(0, new_rpb->rpb_record, id, &desc2);
-	if (!MOV_compare(tdbb, &desc1, &desc2))
+	dsc desc1, desc2;
+	const bool flag_org = EVL_field(0, org_rpb->rpb_record, id, &desc1);
+	const bool flag_new = EVL_field(0, new_rpb->rpb_record, id, &desc2);
+
+	if (!flag_new || (flag_org && !MOV_compare(tdbb, &desc1, &desc2)))
 		return;
 
 	DFW_post_work(transaction, dfw_compute_security, &desc2, 0);
 }
 
 
+static bool check_nullify_source(thread_db* tdbb,
+								 record_param* org_rpb,
+								 record_param* new_rpb,
+								 int field_id_1,
+								 int field_id_2)
+{
 /**************************************
  *
  *	c h e c k _ n u l l i f y _ s o u r c e
@@ -4144,9 +4239,6 @@ static void check_class(thread_db* tdbb,
  *	and if so, validate whether it was an assignment to NULL.
  *
  **************************************/
-static bool check_nullify_source(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb,
-								 int field_id_1, int field_id_2)
-{
 	if (!tdbb->getAttachment()->locksmith(tdbb, NULL_PRIVILEGE))	// legacy right - no system privilege tuning !!!
 		return false;
 
@@ -4171,7 +4263,7 @@ static bool check_nullify_source(thread_db* tdbb, record_param* org_rpb, record_
 			}
 		}
 
-		if (org_null != new_null || MOV_compare(tdbb, &org_desc, &new_desc))
+		if (org_null != new_null || (!new_null && MOV_compare(tdbb, &org_desc, &new_desc)))
 			return false;
 	}
 
@@ -4181,7 +4273,9 @@ static bool check_nullify_source(thread_db* tdbb, record_param* org_rpb, record_
 
 static void check_owner(thread_db* tdbb,
 						jrd_tra* transaction,
-						record_param* old_rpb, record_param* new_rpb, USHORT id)
+						record_param* org_rpb,
+						record_param* new_rpb,
+						USHORT id)
 {
 /**************************************
  *
@@ -4197,22 +4291,67 @@ static void check_owner(thread_db* tdbb,
  **************************************/
 	SET_TDBB(tdbb);
 
-	DSC desc1, desc2;
-	EVL_field(0, old_rpb->rpb_record, id, &desc1);
-	EVL_field(0, new_rpb->rpb_record, id, &desc2);
-	if (!MOV_compare(tdbb, &desc1, &desc2))
+	dsc desc1, desc2;
+	const bool flag_org = EVL_field(0, org_rpb->rpb_record, id, &desc1);
+	const bool flag_new = EVL_field(0, new_rpb->rpb_record, id, &desc2);
+
+	if (!flag_org && !flag_new)
 		return;
 
-	const Jrd::Attachment* const attachment = tdbb->getAttachment();
-	if (attachment->att_user)
+	if (flag_org && flag_new)
 	{
-		const Firebird::MetaName name(attachment->att_user->getUserName());
-		desc2.makeText((USHORT) name.length(), CS_METADATA, (UCHAR*) name.c_str());
 		if (!MOV_compare(tdbb, &desc1, &desc2))
 			return;
+
+		const Jrd::Attachment* const attachment = tdbb->getAttachment();
+
+		if (attachment->att_user)
+		{
+			const MetaName name(attachment->att_user->getUserName());
+			desc2.makeText((USHORT) name.length(), CS_METADATA, (UCHAR*) name.c_str());
+
+			if (!MOV_compare(tdbb, &desc1, &desc2))
+				return;
+		}
 	}
 
+	// Note: NULL->USER and USER->NULL changes also cause the error to be raised
+
 	ERR_post(Arg::Gds(isc_protect_ownership));
+}
+
+
+static void check_repl_state(thread_db* tdbb,
+							 jrd_tra* transaction,
+							 record_param* org_rpb,
+							 record_param* new_rpb,
+							 USHORT id)
+{
+/**************************************
+ *
+ *	c h e c k _ r e p l _ s t a t e
+ *
+ **************************************
+ *
+ * Functional description
+ *	A record in a system relation containing a replication state is
+ *	being changed.  Check to see if the replication state has changed,
+ *	and if so, post the change.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+
+	dsc desc1, desc2;
+	const bool flag_org = EVL_field(0, org_rpb->rpb_record, id, &desc1);
+	const bool flag_new = EVL_field(0, new_rpb->rpb_record, id, &desc2);
+
+	if (!flag_org && !flag_new)
+		return;
+
+	if (flag_org && flag_new && !MOV_compare(tdbb, &desc1, &desc2))
+		return;
+
+	DFW_post_work(transaction, dfw_change_repl_state, "", 0);
 }
 
 
@@ -4383,25 +4522,34 @@ static UCHAR* delete_tail(thread_db* tdbb,
 }
 
 
-// ******************************
-// d f w _ s h o u l d _ k n o w
-// ******************************
-// Not all operations on system tables are relevant to inform DFW.
-// In particular, changing comments on objects is irrelevant.
-// Engine often performs empty update to force some tasks (e.g. to
-// recreate index after field type change). So we must return true
-// if relevant field changed or if no fields changed. Or we must
-// return false if only irrelevant field changed.
-static bool dfw_should_know(thread_db* tdbb, record_param* org_rpb, record_param* new_rpb,
-	USHORT irrelevant_field, bool void_update_is_relevant)
+static bool dfw_should_know(thread_db* tdbb,
+							record_param* org_rpb,
+							record_param* new_rpb,
+							USHORT irrelevant_field,
+							bool void_update_is_relevant)
 {
+/**************************************
+ *
+ *	d f w _ s h o u l d _ k n o w
+ *
+ **************************************
+ *
+ * Functional description
+ * Not all operations on system tables are relevant to inform DFW.
+ * In particular, changing comments on objects is irrelevant.
+ * Engine often performs empty update to force some tasks (e.g. to
+ * recreate index after field type change). So we must return true
+ * if relevant field changed or if no fields changed. Or we must
+ * return false if only irrelevant field changed.
+ *
+ **************************************/
 	dsc desc2, desc3;
 	bool irrelevant_changed = false;
 	for (USHORT iter = 0; iter < org_rpb->rpb_record->getFormat()->fmt_count; ++iter)
 	{
-		const bool a = EVL_field(0, org_rpb->rpb_record, iter, &desc2);
-		const bool b = EVL_field(0, new_rpb->rpb_record, iter, &desc3);
-		if (a != b || MOV_compare(tdbb, &desc2, &desc3))
+		const bool flag_org = EVL_field(0, org_rpb->rpb_record, iter, &desc2);
+		const bool flag_new = EVL_field(0, new_rpb->rpb_record, iter, &desc3);
+		if (flag_org != flag_new || (flag_new && MOV_compare(tdbb, &desc2, &desc3)))
 		{
 			if (iter != irrelevant_field)
 				return true;
@@ -5566,7 +5714,7 @@ static int prepare_update(	thread_db*		tdbb,
 
 				delete_record(tdbb, temp, 0, NULL);
 
-				if (writelock)
+				if (writelock || (transaction->tra_flags & TRA_read_consistency))
 				{
 					tdbb->bumpRelStats(RuntimeStatistics::RECORD_CONFLICTS, relation->rel_id);
 					return PREPARE_DELETE;
@@ -5689,19 +5837,24 @@ static int prepare_update(	thread_db*		tdbb,
 			switch (state)
 			{
 			case tra_committed:
-				// We need to loop waiting in read committed with no read consistency transactions only
-				if (!(transaction->tra_flags & TRA_read_committed) ||
-					(transaction->tra_flags & TRA_read_consistency))
+				// For SNAPSHOT mode transactions raise error early
+				if (!(transaction->tra_flags & TRA_read_committed))
 				{
 					tdbb->bumpRelStats(RuntimeStatistics::RECORD_CONFLICTS, relation->rel_id);
 
-					ERR_post(Arg::Gds(isc_update_conflict) <<
-							 Arg::Gds(isc_concurrent_transaction) << Arg::Num(update_conflict_trans));
+					// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
+					ERR_post(Arg::Gds(isc_deadlock) <<
+							 Arg::Gds(isc_update_conflict) <<
+							 Arg::Gds(isc_concurrent_transaction) << Arg::Int64(update_conflict_trans));
 				}
+				return PREPARE_CONFLICT;
 
 			case tra_limbo:
 				if (!(transaction->tra_flags & TRA_ignore_limbo))
-					ERR_post(Arg::Gds(isc_rec_in_limbo) << Arg::Num(rpb->rpb_transaction_nr));
+				{
+					// Cannot use Arg::Num here because transaction number is 64-bit unsigned integer
+					ERR_post(Arg::Gds(isc_rec_in_limbo) << Arg::Int64(rpb->rpb_transaction_nr));
+				}
 				// fall thru
 
 			case tra_active:
@@ -5992,7 +6145,7 @@ static void refresh_fk_fields(thread_db* tdbb, Record* old_rec, record_param* cu
 		// If field was not changed by user - pick up possible modification by
 		// system cascade trigger
 		if (flag_old == flag_new &&
-			(!flag_old || (flag_old && MOV_compare(tdbb, &desc1, &desc2) == 0)))
+			(!flag_old || (flag_old && !MOV_compare(tdbb, &desc1, &desc2))))
 		{
 			const bool flag_tmp = EVL_field(relation, cur_rpb->rpb_record, fld, &desc1);
 			if (flag_tmp)

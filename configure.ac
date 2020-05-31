@@ -682,6 +682,7 @@ XE_CONF_DIR(fblog, [log files DIR (PREFIX)], FB_LOGDIR)
 XE_CONF_FILE(fblogfilename, [log file name within log dir (firebird.log)], FB_LOGFILENAME, firebird.log)
 XE_CONF_DIR(fbglock, [guardian lock DIR (PREFIX)], FB_GUARDDIR)
 XE_CONF_DIR(fbplugins, [plugins DIR (PREFIX)], FB_PLUGDIR, /plugins)
+XE_CONF_DIR(fbtzdata, [tzdata DIR (PREFIX/tzdata)], FB_TZDATADIR, /tzdata)
 AC_SUBST(CHANGE_PATH_SUPPORT)
 
 dnl gpre built-in language support (C/C++ are mandatory)
@@ -1204,28 +1205,25 @@ for fb_tgt in \$FB_TARGETS; do
 
 	echo "Creating \$fb_tgt directories"
 
-dnl ### GEN ### directories for databases and misc
-	mkdir -p gen/\$fb_tgt/examples
-	mkdir -p gen/\$fb_tgt/refDatabases
-
 dnl # output
-	mkdir -p gen/\$fb_tgt/include
-	mkdir -p gen/\$fb_tgt/intl
 	mkdir -p gen/\$fb_tgt/firebird/bin
 	mkdir -p gen/\$fb_tgt/firebird/plugins
+	mkdir -p gen/\$fb_tgt/firebird/plugins/udr
 	mkdir -p gen/\$fb_tgt/firebird/examples/api
 	mkdir -p gen/\$fb_tgt/firebird/examples/dbcrypt
 	mkdir -p gen/\$fb_tgt/firebird/examples/empbuild
+	mkdir -p gen/\$fb_tgt/firebird/examples/extauth
 	mkdir -p gen/\$fb_tgt/firebird/examples/include
 	mkdir -p gen/\$fb_tgt/firebird/examples/interfaces
 	mkdir -p gen/\$fb_tgt/firebird/examples/package
 	mkdir -p gen/\$fb_tgt/firebird/examples/stat
 	mkdir -p gen/\$fb_tgt/firebird/examples/udf
 	mkdir -p gen/\$fb_tgt/firebird/examples/udr
+	mkdir -p gen/\$fb_tgt/firebird/examples/prebuilt/bin
+	mkdir -p gen/\$fb_tgt/firebird/examples/prebuilt/plugins
 	mkdir -p gen/\$fb_tgt/firebird/lib
 	mkdir -p gen/\$fb_tgt/firebird/misc
 	mkdir -p gen/\$fb_tgt/firebird/help
-	mkdir -p gen/\$fb_tgt/firebird/plugins/udr
 
 dnl ### TEMP ### directories for generated .cpp, .o and .d by module name
 	for src_dir in `cd src; ls -R -1 * | grep : | tr -d : | tr "\n" " "; cd ..`; do

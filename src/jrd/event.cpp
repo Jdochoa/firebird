@@ -65,71 +65,21 @@ using namespace Firebird;
 
 namespace Jrd {
 
-GlobalPtr<EventManager::DbEventMgrMap> EventManager::g_emMap;
-GlobalPtr<Mutex> EventManager::g_mapMutex;
-
 
 void EventManager::init(Attachment* attachment)
 {
 	Database* const dbb = attachment->att_database;
-	EventManager* eventMgr = dbb->dbb_event_mgr;
-
-	if (!eventMgr)
-	{
-		const string id = dbb->getUniqueFileId();
-
-		MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-		eventMgr = dbb->dbb_event_mgr;
-		if (!eventMgr)
-		{
-
-			if (!g_emMap->get(id, eventMgr))
-			{
-				eventMgr = FB_NEW EventManager(id, dbb->dbb_config);
-
-				if (g_emMap->put(id, eventMgr))
-				{
-					fb_assert(false);
-				}
-			}
-
-			fb_assert(eventMgr);
-
-			eventMgr->addRef();
-			dbb->dbb_event_mgr = eventMgr;
-		}
-	}
 
 	if (!attachment->att_event_session)
-		attachment->att_event_session = eventMgr->create_session();
+		attachment->att_event_session = dbb->eventManager()->create_session();
 }
 
 
-void EventManager::destroy(EventManager* eventMgr)
-{
-	if (eventMgr)
-	{
-		const Firebird::string id = eventMgr->m_dbId;
-
-		Firebird::MutexLockGuard guard(g_mapMutex, FB_FUNCTION);
-
-		if (!eventMgr->release())
-		{
-			if (!g_emMap->remove(id))
-			{
-				fb_assert(false);
-			}
-		}
-	}
-}
-
-
-EventManager::EventManager(const Firebird::string& id, Firebird::RefPtr<const Config> conf)
+EventManager::EventManager(const string& id, const Config* conf)
 	: PID(getpid()),
 	  m_process(NULL),
 	  m_processOffset(0),
-	  m_dbId(getPool(), id),
+	  m_dbId(id),
 	  m_config(conf),
 	  m_cleanupSync(getPool(), watcher_thread, THREAD_medium),
 	  m_exiting(false)
@@ -176,7 +126,7 @@ EventManager::~EventManager()
 
 void EventManager::init_shared_file()
 {
-	Firebird::PathName name;
+	PathName name;
 	name.printf(EVENT_FILE, m_dbId.c_str());
 
 	SharedMemory<evh>* tmp = FB_NEW_POOL(*getDefaultMemoryPool())
@@ -243,7 +193,7 @@ void EventManager::deleteSession(SLONG session_id)
 
 SLONG EventManager::queEvents(SLONG session_id,
 							  USHORT events_length, const UCHAR* events,
-							  Firebird::IEventCallback* ast)
+							  IEventCallback* ast)
 {
 /**************************************
  *
@@ -259,7 +209,7 @@ SLONG EventManager::queEvents(SLONG session_id,
 
 	if (events_length && (!events || events[0] != EPB_version1))
 	{
-		Firebird::Arg::Gds(isc_bad_epb_form).raise();
+		Arg::Gds(isc_bad_epb_form).raise();
 	}
 
 	acquire_shmem();
@@ -294,7 +244,7 @@ SLONG EventManager::queEvents(SLONG session_id,
 		if (count > end - events)
 		{
 			release_shmem();
-			Firebird::Arg::Gds(isc_bad_epb_form).raise();
+			Arg::Gds(isc_bad_epb_form).raise();
 		}
 
 		// The data in the event block may have trailing blanks. Strip them off.
@@ -361,7 +311,7 @@ SLONG EventManager::queEvents(SLONG session_id,
 		if (!post_process((prb*) SRQ_ABS_PTR(m_processOffset)))
 		{
 			release_shmem();
-			(Firebird::Arg::Gds(isc_random) << "post_process() failed").raise();
+			(Arg::Gds(isc_random) << "post_process() failed").raise();
 		}
 	}
 
@@ -482,7 +432,7 @@ void EventManager::deliverEvents()
 				if (!post_process(process))
 				{
 					release_shmem();
-					(Firebird::Arg::Gds(isc_random) << "post_process() failed").raise();
+					(Arg::Gds(isc_random) << "post_process() failed").raise();
 				}
 				flag = true;
 				break;
@@ -513,6 +463,10 @@ void EventManager::acquire_shmem()
 
 	while (SRQ_EMPTY(m_sharedMemory->getHeader()->evh_processes))
 	{
+		fb_assert(!m_process);
+		if (m_process)
+			fb_utils::logAndDie("Process disappeared in EventManager::acquire_shmem");
+
 		if (m_sharedMemory->justCreated())
 			break;
 
@@ -659,7 +613,7 @@ void EventManager::create_process()
 	if (m_sharedMemory->eventInit(&process->prb_event) != FB_SUCCESS)
 	{
 		release_shmem();
-		(Firebird::Arg::Gds(isc_random) << "eventInit() failed").raise();
+		(Arg::Gds(isc_random) << "eventInit() failed").raise();
 	}
 
 	m_processOffset = SRQ_REL_PTR(process);
@@ -895,10 +849,10 @@ void EventManager::deliver_request(evt_req* request)
  *	Clean up request.
  *
  **************************************/
-	Firebird::HalfStaticArray<UCHAR, BUFFER_MEDIUM> buffer;
+	HalfStaticArray<UCHAR, BUFFER_MEDIUM> buffer;
 	UCHAR* p = buffer.getBuffer(1);
 
-	Firebird::IEventCallback* ast = request->req_ast;
+	IEventCallback* ast = request->req_ast;
 
 	*p++ = EPB_version1;
 
@@ -919,7 +873,7 @@ void EventManager::deliver_request(evt_req* request)
 
 			if (length + extent > MAX_USHORT)
 			{
-				Firebird::BadAlloc::raise();
+				BadAlloc::raise();
 			}
 
 			buffer.grow(length + extent);
@@ -935,7 +889,7 @@ void EventManager::deliver_request(evt_req* request)
 			*p++ = (UCHAR) (count >> 24);
 		}
 	}
-	catch (const Firebird::BadAlloc&)
+	catch (const BadAlloc&)
 	{
 		gds__log("Out of memory. Failed to post all events.");
 	}
@@ -1386,7 +1340,7 @@ void EventManager::watcher_thread()
 			(void) m_sharedMemory->eventWait(&m_process->prb_event, value, 0);
 		}
 	}
-	catch (const Firebird::Exception& ex)
+	catch (const Exception& ex)
 	{
 		iscLogException("Error in event watcher thread\n", ex);
 	}
@@ -1398,13 +1352,13 @@ void EventManager::watcher_thread()
 			m_startupSemaphore.release();
 		}
 	}
-	catch (const Firebird::Exception& ex)
+	catch (const Exception& ex)
 	{
 		exceptionHandler(ex, NULL);
 	}
 }
 
-void EventManager::exceptionHandler(const Firebird::Exception& ex, ThreadFinishSync<EventManager*>::ThreadRoutine*)
+void EventManager::exceptionHandler(const Exception& ex, ThreadFinishSync<EventManager*>::ThreadRoutine*)
 {
 	iscLogException("Error closing event watcher thread\n", ex);
 }

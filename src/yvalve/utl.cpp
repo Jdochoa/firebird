@@ -666,7 +666,7 @@ void UtilInterface::decodeTime(ISC_TIME time,
 		*fractions = time % ISC_TIME_SECONDS_PRECISION;
 }
 
-void UtilInterface::decodeTimeTz(CheckStatusWrapper* status, const ISC_TIME_TZ* timeTz,
+void decodeTimeTzWithFallback(CheckStatusWrapper* status, const ISC_TIME_TZ* timeTz, SLONG gmtFallback,
 	unsigned* hours, unsigned* minutes, unsigned* seconds, unsigned* fractions,
 	unsigned timeZoneBufferLength, char* timeZoneBuffer)
 {
@@ -674,8 +674,7 @@ void UtilInterface::decodeTimeTz(CheckStatusWrapper* status, const ISC_TIME_TZ* 
 	{
 		tm times;
 		int intFractions;
-		bool tzLookup = TimeZoneUtil::decodeTime(*timeTz, timeZoneBuffer != nullptr, CVT_commonCallbacks,
-			&times, &intFractions);
+		bool tzLookup = TimeZoneUtil::decodeTime(*timeTz, true, gmtFallback, &times, &intFractions);
 
 		if (hours)
 			*hours = times.tm_hour;
@@ -690,17 +689,29 @@ void UtilInterface::decodeTimeTz(CheckStatusWrapper* status, const ISC_TIME_TZ* 
 			*fractions = (unsigned) intFractions;
 
 		if (timeZoneBuffer)
-		{
-			if (tzLookup)
-				TimeZoneUtil::format(timeZoneBuffer, timeZoneBufferLength, timeTz->time_zone);
-			else
-				strncpy(timeZoneBuffer, TimeZoneUtil::GMT_FALLBACK, timeZoneBufferLength);
-		}
+			TimeZoneUtil::format(timeZoneBuffer, timeZoneBufferLength, timeTz->time_zone, !tzLookup, gmtFallback);
 	}
 	catch (const Exception& ex)
 	{
 		ex.stuffException(status);
 	}
+}
+
+void UtilInterface::decodeTimeTz(CheckStatusWrapper* status, const ISC_TIME_TZ* timeTz,
+	unsigned* hours, unsigned* minutes, unsigned* seconds, unsigned* fractions,
+	unsigned timeZoneBufferLength, char* timeZoneBuffer)
+{
+	decodeTimeTzWithFallback(status, timeTz, TimeZoneUtil::NO_OFFSET,
+		hours, minutes, seconds, fractions, timeZoneBufferLength, timeZoneBuffer);
+}
+
+void UtilInterface::decodeTimeTzEx(Firebird::CheckStatusWrapper* status, const ISC_TIME_TZ_EX* timeEx,
+	unsigned* hours, unsigned* minutes, unsigned* seconds, unsigned* fractions,
+	unsigned timeZoneBufferLength, char* timeZoneBuffer)
+{
+	decodeTimeTzWithFallback(status, reinterpret_cast<const ISC_TIME_TZ*>(timeEx),
+		timeZoneBuffer ? timeEx->ext_offset : TimeZoneUtil::NO_OFFSET,
+		hours, minutes, seconds, fractions, timeZoneBufferLength, timeZoneBuffer);
 }
 
 void UtilInterface::encodeTimeTz(CheckStatusWrapper* status, ISC_TIME_TZ* timeTz,
@@ -710,7 +721,7 @@ void UtilInterface::encodeTimeTz(CheckStatusWrapper* status, ISC_TIME_TZ* timeTz
 	{
 		timeTz->utc_time = encodeTime(hours, minutes, seconds, fractions);
 		timeTz->time_zone = TimeZoneUtil::parse(timeZone, strlen(timeZone));
-		TimeZoneUtil::localTimeToUtc(*timeTz, CVT_commonCallbacks);
+		TimeZoneUtil::localTimeToUtc(*timeTz);
 	}
 	catch (const Exception& ex)
 	{
@@ -718,7 +729,7 @@ void UtilInterface::encodeTimeTz(CheckStatusWrapper* status, ISC_TIME_TZ* timeTz
 	}
 }
 
-void UtilInterface::decodeTimeStampTz(CheckStatusWrapper* status, const ISC_TIMESTAMP_TZ* timeStampTz,
+void decodeTimeStampWithFallback(CheckStatusWrapper* status, const ISC_TIMESTAMP_TZ* timeStampTz, SLONG gmtFallback,
 	unsigned* year, unsigned* month, unsigned* day, unsigned* hours, unsigned* minutes, unsigned* seconds,
 	unsigned* fractions, unsigned timeZoneBufferLength, char* timeZoneBuffer)
 {
@@ -726,7 +737,7 @@ void UtilInterface::decodeTimeStampTz(CheckStatusWrapper* status, const ISC_TIME
 	{
 		tm times;
 		int intFractions;
-		bool tzLookup = TimeZoneUtil::decodeTimeStamp(*timeStampTz, timeZoneBuffer != nullptr, &times, &intFractions);
+		bool tzLookup = TimeZoneUtil::decodeTimeStamp(*timeStampTz, true, gmtFallback, &times, &intFractions);
 
 		if (year)
 			*year = times.tm_year + 1900;
@@ -750,17 +761,29 @@ void UtilInterface::decodeTimeStampTz(CheckStatusWrapper* status, const ISC_TIME
 			*fractions = (unsigned) intFractions;
 
 		if (timeZoneBuffer)
-		{
-			if (tzLookup)
-				TimeZoneUtil::format(timeZoneBuffer, timeZoneBufferLength, timeStampTz->time_zone);
-			else
-				strncpy(timeZoneBuffer, TimeZoneUtil::GMT_FALLBACK, timeZoneBufferLength);
-		}
+			TimeZoneUtil::format(timeZoneBuffer, timeZoneBufferLength, timeStampTz->time_zone, !tzLookup, gmtFallback);
 	}
 	catch (const Exception& ex)
 	{
 		ex.stuffException(status);
 	}
+}
+
+void UtilInterface::decodeTimeStampTz(CheckStatusWrapper* status, const ISC_TIMESTAMP_TZ* timeStampTz,
+	unsigned* year, unsigned* month, unsigned* day, unsigned* hours, unsigned* minutes, unsigned* seconds,
+	unsigned* fractions, unsigned timeZoneBufferLength, char* timeZoneBuffer)
+{
+	decodeTimeStampWithFallback(status, timeStampTz, TimeZoneUtil::NO_OFFSET,
+		year, month, day, hours, minutes, seconds, fractions, timeZoneBufferLength, timeZoneBuffer);
+}
+
+void UtilInterface::decodeTimeStampTzEx(CheckStatusWrapper* status, const ISC_TIMESTAMP_TZ_EX* timeStampEx,
+	unsigned* year, unsigned* month, unsigned* day, unsigned* hours, unsigned* minutes, unsigned* seconds,
+	unsigned* fractions, unsigned timeZoneBufferLength, char* timeZoneBuffer)
+{
+	decodeTimeStampWithFallback(status, reinterpret_cast<const ISC_TIMESTAMP_TZ*>(timeStampEx),
+		timeZoneBuffer ? timeStampEx->ext_offset : TimeZoneUtil::NO_OFFSET,
+		year, month, day, hours, minutes, seconds, fractions, timeZoneBufferLength, timeZoneBuffer);
 }
 
 void UtilInterface::encodeTimeStampTz(CheckStatusWrapper* status, ISC_TIMESTAMP_TZ* timeStampTz,
@@ -881,8 +904,17 @@ public:
 			k = ClumpletReader::Tagged;
 			tag = isc_bpb_version1;
 			break;
+		case SPB_SEND:
+			k = ClumpletReader::SpbSendItems;
+			break;
+		case SPB_RECEIVE:
+			k = ClumpletReader::SpbReceiveItems;
+			break;
+		case SPB_RESPONSE:
+			k = ClumpletReader::SpbResponse;
+			break;
 		default:
-			fatal_exception::raiseFmt("Wrong parameters block kind %d, should be from %d to %d", kind, DPB, BPB);
+			fatal_exception::raiseFmt("Wrong parameters block kind %d, should be from %d to %d", kind, DPB, SPB_RESPONSE);
 			break;
 		}
 

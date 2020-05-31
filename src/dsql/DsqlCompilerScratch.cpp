@@ -59,6 +59,27 @@ void DsqlCompilerScratch::dumpContextStack(const DsqlContextStack* stack)
 #endif
 
 
+void DsqlCompilerScratch::putBlrMarkers(ULONG marks)
+{
+	appendUChar(blr_marks);
+	if (marks <= MAX_UCHAR)
+	{
+		appendUChar(1);
+		appendUChar(marks);
+	}
+	else if (marks <= MAX_USHORT)
+	{
+		appendUChar(2);
+		appendUShort(marks);
+	}
+	else
+	{
+		appendUChar(4);
+		appendULong(marks);
+	}
+}
+
+
 // Write out field data type.
 // Taking special care to declare international text.
 void DsqlCompilerScratch::putDtype(const TypeClause* field, bool useSubType)

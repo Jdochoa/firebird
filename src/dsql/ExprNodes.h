@@ -923,6 +923,12 @@ public:
 		return *reinterpret_cast<SLONG*>(litDesc.dsc_address);
 	}
 
+	const char* getText() const
+	{
+		fb_assert(litDesc.dsc_dtype == dtype_text);
+		return reinterpret_cast<const char*>(litDesc.dsc_address);
+	}
+
 	void fixMinSInt64(MemoryPool& pool);
 
 public:

@@ -106,6 +106,11 @@ namespace Jrd
 				return m_applier->executeSql(this, sql);
 			}
 
+			bool executeSqlIntl(unsigned charset, const char* sql)
+			{
+				return m_applier->executeSqlIntl(this, charset, sql);
+			}
+
 			// Construstor
 
 			ReplicatedTransaction(Applier* applier, jrd_tra* transaction)
@@ -164,6 +169,7 @@ namespace Jrd
 					   ULONG length, const UCHAR* data);
 
 		void executeSql(thread_db* tdbb, TraNumber traNum,
+						unsigned charset,
 						const Firebird::string& sql,
 						const Firebird::MetaName& owner);
 

@@ -49,13 +49,21 @@ public:
 	bool sleep(int milliseconds);
 	void sleep();
 
+#ifdef WIN_NT
+	HANDLE getIOEvent() const
+	{
+		return ioEvent;
+	}
+#endif
+
 protected:
 	bool shutdownInProgress;
 	bool sleeping;
 	volatile bool wakeup;
 
 #ifdef WIN_NT
-	void* evnt;
+	HANDLE evnt;
+	HANDLE ioEvent;		// used for overlapped IO
 #else
 	pthread_cond_t condition;
 	pthread_mutex_t mutex;

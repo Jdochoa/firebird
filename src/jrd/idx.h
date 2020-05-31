@@ -295,6 +295,15 @@ static const struct ini_idx_t indices[] =
 	INDEX(54, rel_backup_history, idx_unique, 1)
 		SEGMENT(f_backup_guid, idx_string)		// backup guid
 	}},
+	// define index RDB$INDEX_55 for RDB$PUBLICATIONS unique RDB$PUBLICATION_NAME;
+	INDEX(55, rel_pubs, idx_unique, 1)
+		SEGMENT(f_pub_name, idx_string)		// publication name
+	}},
+	// define index RDB$INDEX_56 for RDB$PUBLICATION_TABLES unique RDB$TABLE_NAME, RDB$PUBLICATION_NAME;
+	INDEX(56, rel_pub_tables, idx_unique, 2)
+		SEGMENT(f_pubtab_tab_name, idx_string),		// table name
+		SEGMENT(f_pubtab_pub_name, idx_string)		// publication name
+	}},
 };
 
 #define SYSTEM_INDEX_COUNT FB_NELEM(indices)

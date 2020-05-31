@@ -63,7 +63,7 @@ void	TRA_update_counters(Jrd::thread_db*, Jrd::Database*);
 int		TRA_wait(Jrd::thread_db* tdbb, Jrd::jrd_tra* trans, TraNumber number, Jrd::jrd_tra::wait_t wait);
 void	TRA_attach_request(Jrd::jrd_tra* transaction, Jrd::jrd_req* request);
 void	TRA_detach_request(Jrd::jrd_req* request);
-void	TRA_setup_request_snapshot(Jrd::thread_db*, Jrd::jrd_req* request, bool no_prior = false);
+void	TRA_setup_request_snapshot(Jrd::thread_db*, Jrd::jrd_req* request);
 void	TRA_release_request_snapshot(Jrd::thread_db*, Jrd::jrd_req* request);
 Jrd::jrd_req* TRA_get_prior_request(Jrd::thread_db*);
 

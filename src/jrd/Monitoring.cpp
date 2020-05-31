@@ -21,15 +21,12 @@
  */
 
 #include "firebird.h"
-#include "ids.h"
-
 #include "../common/classes/auto.h"
 #include "../common/classes/locks.h"
 #include "../common/classes/fb_string.h"
-
-#include "../common/gdsassert.h"
 #include "../jrd/jrd.h"
 #include "../jrd/cch.h"
+#include "../jrd/ids.h"
 #include "../jrd/ini.h"
 #include "../jrd/nbak.h"
 #include "../jrd/req.h"
@@ -44,8 +41,8 @@
 #include "../jrd/mov_proto.h"
 #include "../jrd/opt_proto.h"
 #include "../jrd/pag_proto.h"
+#include "../jrd/cvt_proto.h"
 #include "../jrd/CryptoManager.h"
-
 #include "../jrd/Relation.h"
 #include "../jrd/RecordBuffer.h"
 #include "../jrd/Monitoring.h"
@@ -117,15 +114,50 @@ bool MonitoringTableScan::retrieveRecord(thread_db* tdbb, jrd_rel* relation,
 										 FB_UINT64 position, Record* record) const
 {
 	MonitoringSnapshot* const snapshot = MonitoringSnapshot::create(tdbb);
-	return snapshot->getData(relation)->fetch(position, record);
+	if (!snapshot->getData(relation)->fetch(position, record))
+		return false;
+
+	if (relation->rel_id == rel_mon_attachments || relation->rel_id == rel_mon_statements)
+	{
+		const USHORT fieldId = relation->rel_id == rel_mon_attachments ? 
+								f_mon_att_idle_timer : f_mon_stmt_timer;
+		dsc desc;
+		if (EVL_field(relation, record, fieldId, &desc))
+		{
+			SINT64 clock;
+			memcpy(&clock, desc.dsc_address, sizeof(clock));
+
+			ISC_TIMESTAMP_TZ* ts = reinterpret_cast<ISC_TIMESTAMP_TZ*> (desc.dsc_address);
+			ts->utc_timestamp = TimeZoneUtil::getCurrentGmtTimeStamp().utc_timestamp;
+
+			if (relation->rel_id == rel_mon_attachments)
+			{
+				const SINT64 currClock = fb_utils::query_performance_counter() / fb_utils::query_performance_frequency();
+				NoThrowTimeStamp::add10msec(&ts->utc_timestamp, clock - currClock, ISC_TIME_SECONDS_PRECISION);
+				NoThrowTimeStamp::round_time(ts->utc_timestamp.timestamp_time, 0);
+			}
+			else
+			{
+				const SINT64 currClock = fb_utils::query_performance_counter() * 1000 / fb_utils::query_performance_frequency();
+				NoThrowTimeStamp::add10msec(&ts->utc_timestamp, clock - currClock, ISC_TIME_SECONDS_PRECISION / 1000);
+			}
+
+			// hvlad: this will assign local system (server) time zone that was actual
+			// when current attachment created.
+			Attachment* att = tdbb->getAttachment();
+			ts->time_zone = att->att_timestamp.time_zone;
+		}
+	}
+
+	return true;
 }
 
 
 // MonitoringData class
 
-MonitoringData::MonitoringData(const Database* dbb)
+MonitoringData::MonitoringData(Database* dbb)
 	: PermanentStorage(*dbb->dbb_permanent),
-	  m_dbId(getPool(), dbb->getUniqueFileId())
+	  m_dbId(dbb->getUniqueFileId())
 {
 	initSharedFile();
 }
@@ -727,7 +759,9 @@ void SnapshotData::putField(thread_db* tdbb, Record* record, const DumpField& fi
 		{
 			dsc from_desc;
 			from_desc.makeText(field.length, CS_METADATA, (UCHAR*) field.data);
-			MOV_move(tdbb, &from_desc, &to_desc);
+
+			TruncateCallbacks tcb(isc_truncate_monitor);
+			CVT_move_common(&from_desc, &to_desc, 0, &tcb);	// no need in decimal status for string=>string move
 		}
 	}
 	else if (field.type == VALUE_BOOLEAN)
@@ -920,21 +954,6 @@ void Monitoring::putAttachment(SnapshotData::DumpRecord& record, const Jrd::Atta
 
 	record.reset(rel_mon_attachments);
 
-	int temp = mon_state_idle;
-	for (const jrd_tra* transaction = attachment->att_transactions;
-		 transaction; transaction = transaction->tra_next)
-	{
-		for (const jrd_req* request = transaction->tra_requests;
-			request; request = request->req_tra_next)
-		{
-			if (request->req_transaction && (request->req_flags & req_active))
-			{
-				temp = mon_state_active;
-				break;
-			}
-		}
-	}
-
 	PathName attName(attachment->att_filename);
 	ISC_systemToUtf8(attName);
 
@@ -945,6 +964,7 @@ void Monitoring::putAttachment(SnapshotData::DumpRecord& record, const Jrd::Atta
 	// process id
 	record.storeInteger(f_mon_att_server_pid, getpid());
 	// state
+	int temp = attachment->hasActiveRequests() ? mon_state_active : mon_state_idle;
 	record.storeInteger(f_mon_att_state, temp);
 	// attachment name
 	record.storeString(f_mon_att_name, attName);
@@ -996,9 +1016,15 @@ void Monitoring::putAttachment(SnapshotData::DumpRecord& record, const Jrd::Atta
 	// session idle timeout, seconds
 	record.storeInteger(f_mon_att_idle_timeout, attachment->getIdleTimeout());
 	// when idle timer expires, NULL if not running
-	ISC_TIMESTAMP_TZ idleTimer;
-	if (attachment->getIdleTimerTimestamp(idleTimer))
+	SINT64 clock;
+	if (attachment->getIdleTimerClock(clock))
+	{
+		ISC_TIMESTAMP_TZ idleTimer;
+		static_assert(sizeof(clock) <= sizeof(idleTimer), "timer clock value not fits into timestamp field");
+
+		memcpy(&idleTimer, &clock, sizeof(clock));
 		record.storeTimestampTz(f_mon_att_idle_timer, idleTimer);
+	}
 	// statement timeout, milliseconds
 	record.storeInteger(f_mon_att_stmt_timeout, attachment->getStatementTimeout());
 
@@ -1110,10 +1136,11 @@ void Monitoring::putRequest(SnapshotData::DumpRecord& record, const jrd_req* req
 		record.storeInteger(f_mon_stmt_tra_id, request->req_transaction->tra_number);
 		record.storeTimestampTz(f_mon_stmt_timestamp, request->getTimeStampTz());
 
-		ISC_TIMESTAMP_TZ ts;
-		if (request->req_timer &&
-			request->req_timer->getExpireTimestamp(request->getTimeStampTz(), ts))
+		SINT64 clock;
+		if (request->req_timer && request->req_timer->getExpireClock(clock))
 		{
+			ISC_TIMESTAMP_TZ ts;
+			memcpy(&ts, &clock, sizeof(clock));
 			record.storeTimestampTz(f_mon_stmt_timer, ts);
 		}
 	}
@@ -1410,12 +1437,15 @@ void Monitoring::publishAttachment(thread_db* tdbb)
 	Database* const dbb = tdbb->getDatabase();
 	Attachment* const attachment = tdbb->getAttachment();
 
-	const char* user_name = attachment->att_user ? attachment->att_user->getUserName().c_str() : "";
+	const char* user_name = attachment->att_user ?
+		attachment->att_user->getUserName().c_str() : "";
 
 	fb_assert(dbb->dbb_monitoring_data);
 
 	MonitoringData::Guard guard(dbb->dbb_monitoring_data);
 	dbb->dbb_monitoring_data->setup(attachment->att_attachment_id, user_name);
+
+	attachment->att_flags |= ATT_monitor_init;
 }
 
 
@@ -1424,9 +1454,14 @@ void Monitoring::cleanupAttachment(thread_db* tdbb)
 	Database* const dbb = tdbb->getDatabase();
 	Attachment* const attachment = tdbb->getAttachment();
 
-	if (dbb->dbb_monitoring_data)
+	if (attachment->att_flags & ATT_monitor_init)
 	{
-		MonitoringData::Guard guard(dbb->dbb_monitoring_data);
-		dbb->dbb_monitoring_data->cleanup(attachment->att_attachment_id);
+		attachment->att_flags &= ~ATT_monitor_init;
+
+		if (dbb->dbb_monitoring_data)
+		{
+			MonitoringData::Guard guard(dbb->dbb_monitoring_data);
+			dbb->dbb_monitoring_data->cleanup(attachment->att_attachment_id);
+		}
 	}
 }

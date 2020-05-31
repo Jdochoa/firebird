@@ -809,14 +809,8 @@ int Parser::yylexAux()
 		// Time to scan the string. Make sure the characters are legal,
 		// and find out how long the hex digit string is.
 
-		for (;;)
+		while (lex.ptr < lex.end)
 		{
-			if (charlen == 0 && lex.ptr >= lex.end)			// Unexpected EOS
-			{
-				hexerror = true;
-				break;
-			}
-
 			c = *lex.ptr;
 
 			if (!(classes(c) & CHR_HEX))	// End of digit string
@@ -1363,4 +1357,20 @@ void Parser::yyabandon(const Position& position, SLONG sql_code, const Arg::Stat
 		Arg::Gds(isc_sqlerr) << Arg::Num(sql_code) << status <<
 		Arg::Gds(isc_dsql_line_col_error) <<
 			Arg::Num(position.firstLine) << Arg::Num(position.firstColumn));
+}
+
+void Parser::checkTimeDialect()
+{
+	if (client_dialect < SQL_DIALECT_V6_TRANSITION)
+	{
+		ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
+				  Arg::Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<
+																  Arg::Str("TIME"));
+	}
+	if (db_dialect < SQL_DIALECT_V6_TRANSITION)
+	{
+		ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
+				  Arg::Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<
+																  Arg::Str("TIME"));
+	}
 }

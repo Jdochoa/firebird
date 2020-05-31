@@ -247,5 +247,6 @@ static const struct
 	{"local_timestamp", byte_line},
 	{"local_time", byte_line},
 	{"at", verb_byte_verb},
+	{"marks", byte_literal},
 	{0, 0}
 };

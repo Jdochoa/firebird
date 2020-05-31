@@ -137,6 +137,8 @@ void write_db_creators();
 void write_packages();
 void write_procedures();
 void write_procedure_prms(const GDS_NAME, const GDS_NAME);
+void write_publications();
+void write_pub_tables();
 void write_ref_constraints();
 void write_rel_constraints();
 void write_relations();
@@ -401,11 +403,21 @@ int BACKUP_backup(const TEXT* dbb_file, const TEXT* file_name)
 		BURP_verbose(296);
 		// msg 296 writing mapping
 		write_mapping();
+	}
 
+	if (tdgbl->runtimeODS >= DB_VERSION_DDL12)
+	{
 		// Write database creators
-		BURP_verbose(391);
-		// msg 391 writing database creators
 		write_db_creators();
+	}
+
+	if (tdgbl->runtimeODS >= DB_VERSION_DDL13)
+	{
+		// Write publications
+		BURP_verbose(396);	// msg 396 writing publications
+
+		write_publications();
+		write_pub_tables();
 	}
 
 	// Finish up
@@ -3677,6 +3689,98 @@ void write_procedure_prms(const GDS_NAME package, const GDS_NAME procptr)
 }
 
 
+void write_publications()
+{
+/**************************************
+ *
+ *	w r i t e _ p u b l i c a t i o n s
+ *
+ **************************************
+ *
+ * Functional description
+ * 	write a record in the burp file for
+ *	each publication.
+ *
+ **************************************/
+	TEXT temp[GDS_NAME_LEN];
+	Firebird::IRequest* req_handle = nullptr;
+
+	BurpGlobals* tdgbl = BurpGlobals::getSpecific();
+
+	FOR (REQUEST_HANDLE req_handle)
+		X IN RDB$PUBLICATIONS
+		WITH X.RDB$SYSTEM_FLAG NE 1
+	{
+		put(tdgbl, rec_publication);
+
+		const SSHORT l = PUT_TEXT(att_pub_name, X.RDB$PUBLICATION_NAME);
+		MISC_terminate(X.RDB$PUBLICATION_NAME, temp, l, sizeof(temp));
+
+		BURP_verbose(397, temp);
+		// msg 397 writing publication %s
+
+		if (!X.RDB$OWNER_NAME.NULL)
+			PUT_TEXT(att_pub_owner_name, X.RDB$OWNER_NAME);
+
+		if (!X.RDB$ACTIVE_FLAG.NULL)
+			put_int32(att_pub_active_flag, X.RDB$ACTIVE_FLAG);
+
+		if (!X.RDB$AUTO_ENABLE.NULL)
+			put_int32(att_pub_auto_enable, X.RDB$AUTO_ENABLE);
+
+		put(tdgbl, att_end);
+	}
+	END_FOR
+	ON_ERROR
+		general_on_error();
+	END_ERROR
+
+	MISC_release_request_silent(req_handle);
+}
+
+
+void write_pub_tables()
+{
+/**************************************
+ *
+ *	w r i t e _ p u b _ t a b l e s
+ *
+ **************************************
+ *
+ * Functional description
+ * 	write a record in the burp file for
+ *	each publication table.
+ *
+ **************************************/
+	TEXT temp[GDS_NAME_LEN];
+	Firebird::IRequest* req_handle = nullptr;
+
+	BurpGlobals* tdgbl = BurpGlobals::getSpecific();
+
+	FOR (REQUEST_HANDLE req_handle)
+		X IN RDB$PUBLICATION_TABLES
+	{
+		put(tdgbl, rec_pub_table);
+
+		PUT_TEXT(att_ptab_pub_name, X.RDB$PUBLICATION_NAME);
+
+		const SSHORT l = PUT_TEXT(att_ptab_table_name, X.RDB$TABLE_NAME);
+		MISC_terminate(X.RDB$TABLE_NAME, temp, l, sizeof(temp));
+
+		BURP_verbose(398, temp);
+		// msg 398 writing publication for table %s
+
+		put(tdgbl, att_end);
+	}
+	END_FOR
+	ON_ERROR
+		general_on_error();
+	END_ERROR
+
+	MISC_release_request_silent(req_handle);
+}
+
+
 void write_ref_constraints()
 {
 /**************************************
@@ -4131,43 +4235,48 @@ void write_db_creators()
  **************************************/
 	Firebird::IRequest* req_handle = nullptr;
 	TEXT temp[GDS_NAME_LEN];
+	bool first = true;
 
 	BurpGlobals* tdgbl = BurpGlobals::getSpecific();
 
-	if (tdgbl->runtimeODS >= DB_VERSION_DDL12)
-	{
-		FOR (REQUEST_HANDLE req_handle)
-			C IN RDB$DB_CREATORS
+	FOR (REQUEST_HANDLE req_handle)
+		C IN RDB$DB_CREATORS
 
-			bool fl = true;
+		if (first)
+		{
+			BURP_verbose(391);
+			// msg 391 writing database create grants
+			first = false;
+		}
 
-			if (!C.RDB$USER_TYPE.NULL)
-			{
+		bool fl = true;
+
+		if (!C.RDB$USER_TYPE.NULL)
+		{
+			put(tdgbl, rec_db_creator);
+			fl = false;
+			put_int32(att_dbc_type, C.RDB$USER_TYPE);
+		}
+
+		if (!C.RDB$USER.NULL)
+		{
+			if (fl)
 				put(tdgbl, rec_db_creator);
-				fl = false;
-				put_int32(att_dbc_type, C.RDB$USER_TYPE);
-			}
+			fl = false;
+			const SSHORT l = PUT_TEXT(att_dbc_user, C.RDB$USER);
 
-			if (!C.RDB$USER.NULL)
-			{
-				if (fl)
-					put(tdgbl, rec_db_creator);
-				fl = false;
-				const SSHORT l = PUT_TEXT(att_dbc_user, C.RDB$USER);
+			MISC_terminate (C.RDB$USER, temp, l, sizeof(temp));
+			BURP_verbose (392, temp);
+			// msg 392 writing db creator %s
+		}
 
-				MISC_terminate (C.RDB$USER, temp, l, sizeof(temp));
-				BURP_verbose (392, temp);
-				// msg 392 writing db creator %s
-			}
+		if (!fl)
+			put(tdgbl, att_end);
 
-			if (!fl)
-				put(tdgbl, att_end);
-
-		END_FOR;
-		ON_ERROR
-			general_on_error();
-		END_ERROR;
-	}
+	END_FOR;
+	ON_ERROR
+		general_on_error();
+	END_ERROR;
 
 	MISC_release_request_silent(req_handle);
 }
@@ -4316,7 +4425,7 @@ void write_trigger_messages()
 		const SSHORT l = PUT_TEXT (att_trigmsg_name, X.RDB$TRIGGER_NAME);
 		MISC_terminate (X.RDB$TRIGGER_NAME, temp, l, sizeof(temp));
 		BURP_verbose (157, temp);
-		// msg 157 writing trigger message for *s
+		// msg 157 writing trigger message for %s
 		put_int32 (att_trigmsg_number, X.RDB$MESSAGE_NUMBER);
 		PUT_MESSAGE (att_trigmsg_text, att_end, X.RDB$MESSAGE);
 		put(tdgbl, att_end);

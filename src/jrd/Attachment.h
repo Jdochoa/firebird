@@ -41,6 +41,7 @@
 #include "../common/classes/array.h"
 #include "../common/classes/stack.h"
 #include "../common/classes/timestamp.h"
+#include "../common/classes/TimerImpl.h"
 #include "../common/ThreadStart.h"
 #include "../common/TimeZoneUtil.h"
 
@@ -150,7 +151,6 @@ const ULONG ATT_cancel_disable		= 0x00200L;	// Disable cancel operations
 const ULONG ATT_no_db_triggers		= 0x00400L;	// Don't execute database triggers
 const ULONG ATT_manual_lock			= 0x00800L;	// Was locked manually
 const ULONG ATT_async_manual_lock	= 0x01000L;	// Async mutex was locked manually
-//const ULONG ATT_purge_started		= 0x02000L; // Purge already started - avoid 2 purges at once
 const ULONG ATT_overwrite_check		= 0x02000L;	// Attachment checks is it possible to overwrite DB
 const ULONG ATT_system				= 0x04000L; // Special system attachment
 const ULONG ATT_creator				= 0x08000L; // This attachment created the DB
@@ -158,6 +158,8 @@ const ULONG ATT_monitor_done		= 0x10000L; // Monitoring data is refreshed
 const ULONG ATT_security_db			= 0x20000L; // Attachment used for security purposes
 const ULONG ATT_mapping				= 0x40000L; // Attachment used for mapping auth block
 const ULONG ATT_crypt_thread		= 0x80000L; // Attachment from crypt thread
+const ULONG ATT_monitor_init		= 0x100000L; // Attachment is registered in monitoring
+const ULONG ATT_repl_reset			= 0x200000L; // Replication set has been reset
 
 const ULONG ATT_NO_CLEANUP			= (ATT_no_cleanup | ATT_notify_gc);
 
@@ -263,6 +265,8 @@ public:
 	{
 		return shutError;
 	}
+
+	void onIdleTimer(Firebird::TimerImpl*);
 
 private:
 	Attachment* att;
@@ -508,6 +512,7 @@ public:
 	static int blockingAstShutdown(void*);
 	static int blockingAstCancel(void*);
 	static int blockingAstMonitor(void*);
+	static int blockingAstReplSet(void*);
 
 	Firebird::Array<MemoryPool*>	att_pools;		// pools
 
@@ -555,6 +560,7 @@ public:
 	void signalShutdown(ISC_STATUS code);
 
 	void mergeStats();
+	bool hasActiveRequests() const;
 
 	bool backupStateWriteLock(thread_db* tdbb, SSHORT wait);
 	void backupStateWriteUnLock(thread_db* tdbb);
@@ -599,7 +605,14 @@ public:
 	void setupIdleTimer(bool clear);
 
 	// returns time when idle timer will be expired, if set
-	bool getIdleTimerTimestamp(ISC_TIMESTAMP_TZ& ts) const;
+	bool getIdleTimerClock(SINT64& clock) const
+	{
+		if (!att_idle_timer)
+			return false;
+
+		clock = att_idle_timer->getExpireClock();
+		return (clock != 0);
+	}
 
 	// batches control
 	void registerBatch(JBatch* b)
@@ -634,45 +647,24 @@ public:
 		return att_initial_options.getBindings();
 	}
 
+	void checkReplSetLock(thread_db* tdbb);
+	void invalidateReplSet(thread_db* tdbb, bool broadcast);
+
 
 private:
 	Attachment(MemoryPool* pool, Database* dbb);
 	~Attachment();
 
-	class IdleTimer FB_FINAL :
-		public Firebird::RefCntIface<Firebird::ITimerImpl<IdleTimer, Firebird::CheckStatusWrapper> >
-	{
-	public:
-		explicit IdleTimer(JAttachment* jAtt) :
-			m_attachment(jAtt),
-			m_fireTime(0),
-			m_expTime(0)
-		{ }
-
-		// ITimer implementation
-		void handler();
-		int release();
-
-		// Set timeout, seconds
-		void reset(unsigned int timeout);
-
-		SINT64 getExpiryTime() const
-		{
-			return m_expTime;
-		}
-
-	private:
-		Firebird::RefPtr<JAttachment> m_attachment;
-		SINT64 m_fireTime;		// when ITimer will fire, could be less than m_expTime
-		SINT64 m_expTime;		// when actual idle timeout will expire
-	};
-
 	unsigned int att_idle_timeout;		// seconds
 	unsigned int att_stmt_timeout;		// milliseconds
+
+	typedef Firebird::TimerWithRef<StableAttachmentPart> IdleTimer;
 	Firebird::RefPtr<IdleTimer> att_idle_timer;
 
 	Firebird::Array<JBatch*> att_batches;
 	InitialOptions att_initial_options;		// Initial session options
+
+	Lock* att_repl_lock;				// Replication set lock
 };
 
 

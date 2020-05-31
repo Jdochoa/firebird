@@ -293,9 +293,7 @@ namespace Jrd {
 
 class thread_db;
 
-class LockManager : private Firebird::RefCounted,
-					public Firebird::GlobalStorage,
-					public Firebird::IpcObject
+class LockManager final : public Firebird::GlobalStorage, public Firebird::IpcObject
 {
 	class LockTableGuard
 	{
@@ -391,16 +389,11 @@ class LockManager : private Firebird::RefCounted,
 	};
 #undef FB_LOCKED_FROM
 
-	typedef Firebird::GenericMap<Firebird::Pair<Firebird::Left<Firebird::string, LockManager*> > > DbLockMgrMap;
-
-	static Firebird::GlobalPtr<DbLockMgrMap> g_lmMap;
-	static Firebird::GlobalPtr<Firebird::Mutex> g_mapMutex;
-
 	const int PID;
 
 public:
-	static LockManager* create(const Firebird::string&, Firebird::RefPtr<const Config>);
-	static void destroy(LockManager*);
+	explicit LockManager(const Firebird::string&, const Config* conf);
+	~LockManager();
 
 	bool initializeOwner(Firebird::CheckStatusWrapper*, LOCK_OWNER_T, UCHAR, SRQ_PTR*);
 	void shutdownOwner(thread_db*, SRQ_PTR*);
@@ -422,9 +415,6 @@ public:
 	void exceptionHandler(const Firebird::Exception& ex, ThreadFinishSync<LockManager*>::ThreadRoutine* routine);
 
 private:
-	explicit LockManager(const Firebird::string&, Firebird::RefPtr<const Config>);
-	~LockManager();
-
 	void acquire_shmem(SRQ_PTR);
 	UCHAR* alloc(USHORT, Firebird::CheckStatusWrapper*);
 	lbl* alloc_lock(USHORT, Firebird::CheckStatusWrapper*);
@@ -498,8 +488,8 @@ public:
 private:
 	bool m_blockage;
 
-	Firebird::string m_dbId;
-	Firebird::RefPtr<const Config> m_config;
+	const Firebird::string& m_dbId;
+	const Config* const m_config;
 
 	// configurations parameters - cached values
 	const ULONG m_acquireSpins;

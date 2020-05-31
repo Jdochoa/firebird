@@ -42,6 +42,10 @@
 
 namespace Firebird {
 
+const ISC_TIMESTAMP NoThrowTimeStamp::MIN_TIMESTAMP = {NoThrowTimeStamp::MIN_DATE, 0};
+const ISC_TIMESTAMP NoThrowTimeStamp::MAX_TIMESTAMP =
+	{NoThrowTimeStamp::MAX_DATE, NoThrowTimeStamp::ISC_TICKS_PER_DAY - 1};
+
 const ISC_TIME NoThrowTimeStamp::POW_10_TABLE[] =
 	{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000};
 
@@ -291,6 +295,28 @@ ISC_TIMESTAMP NoThrowTimeStamp::encode_timestamp(const struct tm* times, const i
 	ts.timestamp_time = encode_time(times->tm_hour, times->tm_min, times->tm_sec, fractions);
 
 	return ts;
+}
+
+void NoThrowTimeStamp::add10msec(ISC_TIMESTAMP* v, SINT64 msec, SINT64 multiplier)
+{
+	const SINT64 full = msec * multiplier;
+	const int days = full / (SECONDS_PER_DAY * ISC_TIME_SECONDS_PRECISION);
+	const int secs = full % (SECONDS_PER_DAY * ISC_TIME_SECONDS_PRECISION);
+
+	v->timestamp_date += days;
+
+	// Time portion is unsigned, so we avoid unsigned rolling over negative values
+	// that only produce a new unsigned number with the wrong result.
+	if (secs < 0 && ISC_TIME(-secs) > v->timestamp_time)
+	{
+		v->timestamp_date--;
+		v->timestamp_time += (SECONDS_PER_DAY * ISC_TIME_SECONDS_PRECISION) + secs;
+	}
+	else if ((v->timestamp_time += secs) >= (SECONDS_PER_DAY * ISC_TIME_SECONDS_PRECISION))
+	{
+		v->timestamp_date++;
+		v->timestamp_time -= (SECONDS_PER_DAY * ISC_TIME_SECONDS_PRECISION);
+	}
 }
 
 void NoThrowTimeStamp::round_time(ISC_TIME &ntime, const int precision)

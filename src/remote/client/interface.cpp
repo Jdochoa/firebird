@@ -8743,8 +8743,8 @@ ClntAuthBlock::ClntAuthBlock(const Firebird::PathName* fileName, Firebird::Clump
 	  cliUserName(getPool()), cliPassword(getPool()), cliOrigUserName(getPool()),
 	  dataForPlugin(getPool()), dataFromPlugin(getPool()),
 	  cryptKeys(getPool()), dpbConfig(getPool()), dpbPlugins(getPool()),
-	  plugins(IPluginManager::TYPE_AUTH_CLIENT), authComplete(false), firstTime(true),
-	  createdInterface(nullptr)
+	  createdInterface(nullptr),
+	  plugins(IPluginManager::TYPE_AUTH_CLIENT), authComplete(false), firstTime(true)
 {
 	if (dpb && tags)
 	{

@@ -546,7 +546,7 @@ public:
 	void dropDatabase(Firebird::CheckStatusWrapper* status);
 
 	void addCleanupHandler(Firebird::CheckStatusWrapper* status, CleanupCallback* callback);
-	YTransaction* getTransaction(Firebird::CheckStatusWrapper* status, Firebird::ITransaction* tra);
+	YTransaction* getTransaction(Firebird::ITransaction* tra);
 	void getNextTransaction(Firebird::CheckStatusWrapper* status, Firebird::ITransaction* tra, NextTransaction& next);
 	void execute(Firebird::CheckStatusWrapper* status, isc_tr_handle* traHandle,
 		unsigned int stmtLength, const char* sqlStmt, unsigned int dialect,
@@ -673,8 +673,6 @@ public:
 		Firebird::IOffsetsCallback* callback);
 	Firebird::IDecFloat16* getDecFloat16(Firebird::CheckStatusWrapper* status);
 	Firebird::IDecFloat34* getDecFloat34(Firebird::CheckStatusWrapper* status);
-	Firebird::ITransaction* getTransactionByHandle(Firebird::CheckStatusWrapper* status, isc_tr_handle* hndlPtr);
-	Firebird::IStatement* getStatementByHandle(Firebird::CheckStatusWrapper* status, isc_stmt_handle* hndlPtr);
 	void decodeTimeTz(Firebird::CheckStatusWrapper* status, const ISC_TIME_TZ* timeTz,
 		unsigned* hours, unsigned* minutes, unsigned* seconds, unsigned* fractions,
 		unsigned timeZoneBufferLength, char* timeZoneBuffer);
@@ -687,6 +685,12 @@ public:
 		unsigned year, unsigned month, unsigned day,
 		unsigned hours, unsigned minutes, unsigned seconds, unsigned fractions, const char* timeZone);
 	Firebird::IInt128* getInt128(Firebird::CheckStatusWrapper* status);
+	void decodeTimeTzEx(Firebird::CheckStatusWrapper* status, const ISC_TIME_TZ_EX* timeEx,
+		unsigned* hours, unsigned* minutes, unsigned* seconds, unsigned* fractions,
+		unsigned timeZoneBufferLength, char* timeZoneBuffer);
+	void decodeTimeStampTzEx(Firebird::CheckStatusWrapper* status, const ISC_TIMESTAMP_TZ_EX* timeStampEx,
+		unsigned* year, unsigned* month, unsigned* day, unsigned* hours, unsigned* minutes, unsigned* seconds,
+		unsigned* fractions, unsigned timeZoneBufferLength, char* timeZoneBuffer);
 };
 
 }	// namespace Why

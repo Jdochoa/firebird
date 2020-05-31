@@ -113,11 +113,6 @@ if defined VS140COMNTOOLS (
 if defined VS120COMNTOOLS (
 @copy "%VS120COMNTOOLS%\..\..\VC\redist\%FB_VC_CRT_DIR%\Microsoft.VC120.CRT\msvcr120.dll" %FB_OUTPUT_DIR% >nul
 @copy "%VS120COMNTOOLS%\..\..\VC\redist\%FB_VC_CRT_DIR%\Microsoft.VC120.CRT\msvcp120.dll" %FB_OUTPUT_DIR% >nul
-) else (
-if defined VS100COMNTOOLS (
-@copy "%VS100COMNTOOLS%\..\..\VC\redist\%FB_VC_CRT_DIR%\Microsoft.VC100.CRT\msvcr100.dll" %FB_OUTPUT_DIR% >nul
-@copy "%VS100COMNTOOLS%\..\..\VC\redist\%FB_VC_CRT_DIR%\Microsoft.VC100.CRT\msvcp100.dll" %FB_OUTPUT_DIR% >nul
-)
 )
 )
 )

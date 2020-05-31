@@ -59,6 +59,7 @@
 #include "../common/classes/GenericMap.h"
 #include "../common/classes/GetPlugins.h"
 #include "../common/classes/fb_tls.h"
+#include "../common/status.h"
 #include "../common/classes/InternalMessageBuffer.h"
 #include "../yvalve/utl_proto.h"
 #include "../yvalve/why_proto.h"
@@ -3809,6 +3810,60 @@ ISC_STATUS API_ROUTINE fb_get_transaction_handle(ISC_STATUS* userStatus, isc_tr_
 }
 
 
+// Get transaction interface by legacy handle
+ISC_STATUS API_ROUTINE fb_get_transaction_interface(ISC_STATUS* userStatus, void* iPtr,
+	isc_tr_handle* hndlPtr)
+{
+	StatusVector status(userStatus);
+	CheckStatusWrapper statusWrapper(&status);
+
+	try
+	{
+		ITransaction** tra = (ITransaction**) iPtr;
+		if (*tra)
+			(Arg::Gds(isc_random) << "Interface must be null").raise();
+
+		RefPtr<YTransaction> transaction(translateHandle(transactions, hndlPtr));
+
+		transaction->addRef();
+		*tra = transaction;
+	}
+	catch (const Exception& e)
+	{
+		e.stuffException(&statusWrapper);
+	}
+
+	return status[1];
+}
+
+
+// Get statement interface by legacy handle
+ISC_STATUS API_ROUTINE fb_get_statement_interface(ISC_STATUS* userStatus, void* iPtr,
+	isc_stmt_handle* hndlPtr)
+{
+	StatusVector status(userStatus);
+	CheckStatusWrapper statusWrapper(&status);
+
+	try
+	{
+		IStatement** stmt = (IStatement**) iPtr;
+		if (*stmt)
+			(Arg::Gds(isc_random) << "Interface must be null").raise();
+
+		RefPtr<IscStatement> statement(translateHandle(statements, hndlPtr));
+		statement->checkPrepared(isc_info_unprepared_stmt);
+
+		*stmt = statement->getInterface();
+	}
+	catch (const Exception& e)
+	{
+		e.stuffException(&statusWrapper);
+	}
+
+	return status[1];
+}
+
+
 //-------------------------------------
 
 namespace Why {
@@ -4401,7 +4456,7 @@ IResultSet* YStatement::openCursor(CheckStatusWrapper* status, ITransaction* tra
 		}
 		fb_assert(rs);
 
-		YTransaction* const yTra = attachment.get()->getTransaction(status, transaction);
+		YTransaction* const yTra = attachment.get()->getTransaction(transaction);
 
 		YResultSet* r = FB_NEW YResultSet(attachment.get(), yTra, this, rs);
 		r->addRef();
@@ -5536,7 +5591,7 @@ YBlob* YAttachment::createBlob(CheckStatusWrapper* status, ITransaction* transac
 	{
 		YEntry<YAttachment> entry(status, this);
 
-		YTransaction* yTra = getTransaction(status, transaction);
+		YTransaction* yTra = getTransaction(transaction);
 		NextTransaction nextTra(yTra->next);
 
 		IBlob* blob = entry.next()->createBlob(status, nextTra, id, bpbLength, bpb);
@@ -5563,7 +5618,7 @@ YBlob* YAttachment::openBlob(CheckStatusWrapper* status, ITransaction* transacti
 	{
 		YEntry<YAttachment> entry(status, this);
 
-		YTransaction* yTra = getTransaction(status, transaction);
+		YTransaction* yTra = getTransaction(transaction);
 		NextTransaction nextTra(yTra->next);
 
 		IBlob* blob = entry.next()->openBlob(status, nextTra, id, bpbLength, bpb);
@@ -5664,7 +5719,7 @@ IResultSet* YAttachment::openCursor(CheckStatusWrapper* status, ITransaction* tr
 		}
 		fb_assert(rs);
 
-		YTransaction* const yTra = getTransaction(status, transaction);
+		YTransaction* const yTra = getTransaction(transaction);
 
 		YResultSet* r = FB_NEW YResultSet(this, yTra, rs);
 		r->addRef();
@@ -5878,18 +5933,16 @@ void YAttachment::addCleanupHandler(CheckStatusWrapper* status, CleanupCallback*
 }
 
 
-YTransaction* YAttachment::getTransaction(CheckStatusWrapper* status, ITransaction* tra)
+YTransaction* YAttachment::getTransaction(ITransaction* tra)
 {
 	if (!tra)
 		Arg::Gds(isc_bad_trans_handle).raise();
 
-	status->init();
-
 	// If validation is successfull, this means that this attachment and valid transaction
 	// use same provider. I.e. the following cast is safe.
-	YTransaction* yt = static_cast<YTransaction*>(tra->validate(status, this));
-	if (status->getState() & Firebird::IStatus::STATE_ERRORS)
-		status_exception::raise(status);
+	FbLocalStatus status;
+	YTransaction* yt = static_cast<YTransaction*>(tra->validate(&status, this));
+	status.check();
 	if (!yt)
 		Arg::Gds(isc_bad_trans_handle).raise();
 
@@ -5901,7 +5954,7 @@ YTransaction* YAttachment::getTransaction(CheckStatusWrapper* status, ITransacti
 void YAttachment::getNextTransaction(CheckStatusWrapper* status, ITransaction* tra,
 	NextTransaction& next)
 {
-	next = getTransaction(status, tra)->next;
+	next = getTransaction(tra)->next;
 	if (!next.hasData())
 		Arg::Gds(isc_bad_trans_handle).raise();
 }
@@ -6534,41 +6587,6 @@ void Dispatcher::setDbCryptCallback(CheckStatusWrapper* status, ICryptKeyCallbac
 {
 	status->init();
 	cryptCallback = callback;
-}
-
-ITransaction* UtilInterface::getTransactionByHandle(CheckStatusWrapper* status, isc_tr_handle* hndlPtr)
-{
-	try
-	{
-		RefPtr<YTransaction> transaction(translateHandle(transactions, hndlPtr));
-
-		transaction->addRef();
-		return transaction;
-	}
-	catch (const Exception& e)
-	{
-		e.stuffException(status);
-	}
-
-	return nullptr;
-}
-
-
-IStatement* UtilInterface::getStatementByHandle(Firebird::CheckStatusWrapper* status, isc_stmt_handle* hndlPtr)
-{
-	try
-	{
-		RefPtr<IscStatement> statement(translateHandle(statements, hndlPtr));
-		statement->checkPrepared(isc_info_unprepared_stmt);
-
-		return statement->getInterface();
-	}
-	catch (const Exception& e)
-	{
-		e.stuffException(status);
-	}
-
-	return nullptr;
 }
 
 } // namespace Why

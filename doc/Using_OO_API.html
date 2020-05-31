@@ -6,9 +6,10 @@
 	<meta name="generator" content="LibreOffice 5.1.6.2 (Linux)"/>
 	<meta name="author" content="alex "/>
 	<meta name="created" content="00:00:00"/>
-	<meta name="changed" content="2019-07-03T14:11:00.103544709"/>
+	<meta name="changed" content="2020-05-29T15:30:00.511292441"/>
 	<meta name="created" content="2013-05-31T00:00:00.010003100">
-	<meta name="changed" content="2018-12-10T17:39:15.976002774">
+	<meta name="changed" content="2020-05-08T12:59:03.687467748">
+	<meta name="created" content="00:00:00">
 	<meta name="created" content="00:00:00">
 	<meta name="created" content="00:00:00">
 	<meta name="created" content="00:00:00">
@@ -17,8 +18,8 @@
 	<meta name="created" content="00:00:00">
 	<style type="text/css">
 		@page { margin: 0.79in }
-		p { margin-bottom: 0.08in; color: #000000 }
 		h1 { color: #000000 }
+		p { margin-bottom: 0.08in; color: #000000 }
 	</style>
 </head>
 <body lang="en-US" text="#000000" dir="ltr">
@@ -392,7 +393,9 @@ of IMessageMetadata – one can:</font></p>
 	<li/>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">get
 	it from <a href="#Statement">IStatement</a>,</font></p>
-	<li/>
+</ul>
+<ul>
+	<li value="1"/>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">build
 	using <a href="#MetadataBuilder">IMetadataBuilder</a> interface,</font></p>
 	<li/>
@@ -1153,10 +1156,11 @@ batching in firebird.</font></p>
 <p style="margin-bottom: 0in; font-variant: normal; font-style: normal">
 <font size="4" style="font-size: 14pt">Two words about access to
 batches from ISC API - one can execute prepared ISC statement in
-batch mode. Main support for it is present in Util interface, namely
-getTransactionByHandle &amp; getStatementByHandle methods, which make
-it possible to access appropriate interfaces identical to existing
-ISC handles. An example of it is present in 12.batch_isc.cpp.</font></p>
+batch mode. Main support for it is presence of two new API functions,
+namely fb_get_transaction_interface &amp; fb_get_statement_interface,
+which make it possible to access appropriate interfaces identical to
+existing ISC handles. An example of it is present in
+12.batch_isc.cpp.</font></p>
 <p style="margin-bottom: 0in"><br/>
 
 </p>
@@ -2089,6 +2093,12 @@ objects:</font></p>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">const
 	char* getRootDirectory() - returns root directory of current
 	instance, in single-instance case usually matches install directory.</font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">const
+	char* getDefaultSecurityDb() - returns default (i.e. not taking into
+	an account configuration files) pathname of security database, used
+	first of all internally to enable correct access to security
+	database on multi-provider server with zero configuration.</font></p>
 </ol>
 <p style="margin-bottom: 0in"><a name="Directory codes"></a><font size="4" style="font-size: 14pt">Directory
 codes:</font></p>
@@ -2180,6 +2190,12 @@ parameter replaced by FB_DEC34 for DecFloat34:</font></p>
 	fromString(StatusType* status, const char* from, FB_DEC16* to) –
 	make decimal float value from string.</font></p>
 </ol>
+<p style="margin-bottom: 0in"><br/>
+
+</p>
+<p style="margin-bottom: 0in"><br/>
+
+</p>
 <p style="margin-bottom: 0in"><a name="Dtc"></a><font size="4" style="font-size: 14pt"><font color="#000000">Dtc
 </font>interface – distributed transactions coordinator. Used to
 start distributed (working with 2 or more attachments) transaction.
@@ -2296,6 +2312,27 @@ configuration value for different databases). </font>
 	old DB engine is in use on modern server. Pay attention – keys
 	(see getKey()) from different versions do not match and when used
 	inappropriately will always return 0/nullptr/false.</font></p>
+</ol>
+<p style="margin-bottom: 0in"><br/>
+
+</p>
+<p style="margin-bottom: 0in"><br/>
+
+</p>
+<p style="margin-bottom: 0in"><a name="Int128"></a><font size="4" style="font-size: 14pt">Int128
+interfaces that help to work with 128-bit integers (used as base type
+for numeric and decimal with precision &gt; 18).</font></p>
+<ol>
+	<li value="1"/>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
+	toString(StatusType* status, const FB_I128* from, int scale,
+	unsigned bufferLength, char* buffer) – convert 128-bit integer
+	value to string taking scale into an account.</font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
+	fromString(StatusType* status, int scale, const char* from, FB_I128*
+	to) – make 128-bit integer value from string taking scale into an
+	account.</font></p>
 </ol>
 <p style="margin-bottom: 0in"><br/>
 
@@ -2469,6 +2506,22 @@ message or construct metadata from the beginning.</font></p>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">IMessageMetadata*
 	getMetadata(StatusType* status) – get <a href="#10. MessageMetadata">MessageMetadata</a>
 	interface built by this builder.</font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font face="Liberation Serif, serif"><font size="4" style="font-size: 14pt">void
+	setField(StatusType* status, uint index, const string field) – set
+	name of a field / column.</font></font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font face="Liberation Serif, serif"><font size="4" style="font-size: 14pt">void
+	setRelation(StatusType* status, uint index, const string relation) –
+	set name of the relation from which the field was selected.</font></font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font face="Liberation Serif, serif"><font size="4" style="font-size: 14pt">void
+	setOwner(StatusType* status, uint index, const string owner) – set
+	name of that relation owner.</font></font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font face="Liberation Serif, serif"><font size="4" style="font-size: 14pt">void
+	setAlias(StatusType* status, uint index, const string alias) – set
+	alias name of the field in related statement.</font></font></p>
 </ol>
 <p style="margin-bottom: 0in"><br/>
 
@@ -3034,7 +3087,9 @@ interface – replaces isc_tr_handle.</font></p>
 	<li/>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
 	prepare(StatusType* status, unsigned msgLength, const unsigned char*
-	message) – replaces isc_prepare_transaction2().</font></p>
+	message) – replaces isc_prepare_transaction2(), with zero
+	msgLength behaves like isc_prepare_transaction() automatically
+	generating appropriate message.</font></p>
 	<li/>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
 	commit(StatusType* status) – replaces isc_commit_transaction().</font></p>
@@ -3169,15 +3224,6 @@ interface – various helper methods required here or there.</font></p>
 	getDecFloat34(StatusType* status) – access <a href="#DecFloat34">DecFloat34</a>
 	interface.</font></p>
 	<li/>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">ITransaction*
-	getTransactionByHandle(StatusType* status, isc_tr_handle* hndlPtr) –
-	access <a href="#Transaction">Transaction</a> interface by ISC API
-	hndl.</font></p>
-	<li/>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">IStatement*
-	getStatementByHandle(StatusType* status, isc_stmt_handle* hndlPtr) –
-	access <a href="#Statement">Statement</a> interface by ISC API hndl.</font></p>
-	<li/>
 <p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
 	decodeTimeTz(StatusType* status, const ISC_TIME_TZ* timeTz,
 	unsigned* hours, unsigned* minutes, unsigned* seconds, unsigned*</font></p>
@@ -3202,6 +3248,23 @@ interface – various helper methods required here or there.</font></p>
 	unsigned year, unsigned month, unsigned day, unsigned hours,
 	unsigned minutes, unsigned seconds, unsigned fractions, const char*
 	timeZone) – encode timestamp taking time zone into an account.</font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">IInt128*
+	getInt128(Status status) – access <a href="#Int128">Int128</a>
+	interface.</font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
+	decodeTimeTzEx(Status status, const ISC_TIME_TZ_EX* timeTz, uint*
+	hours, uint* minutes, uint* seconds, uint* fractions, uint
+	timeZoneBufferLength, string timeZoneBuffer) – decode time taking
+	extended time zone into an account.</font></p>
+	<li/>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">void
+	decodeTimeStampTzEx(Status status, const ISC_TIMESTAMP_TZ_EX*
+	timeStampTz, uint* year, uint* month, uint* day, uint* hours, uint*
+	minutes, uint* seconds, uint* fractions, uint timeZoneBufferLength,
+	string timeZoneBuffer) – decode timestamp taking extended time
+	zone into an account.</font></p>
 </ol>
 <p style="margin-bottom: 0in"><br/>
 
@@ -3298,11 +3361,24 @@ defined by XpbBuilder interface:</font></p>
 </p>
 <p style="margin-bottom: 0in"><a name="Valid builder types"></a><font size="4" style="font-size: 14pt">Valid
 builder types:</font></p>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">BATCH</font></p>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">DPB</font></p>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_ATTACH</font></p>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_START</font></p>
-<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">TPB</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">BATCH
+(IBatch parameters block)</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">BPB
+(BLOB parameters block)</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">DPB
+(database attachment parameters block)</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_ATTACH
+(service attachment parameters block)</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_START
+(start service parameters)</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_SEND
+(send items in <a href="#Service">IService</a>::query())</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_RECEIVE
+(receive items in <a href="#Service">IService</a>::query())</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">SPB_RESPONSE
+(response from <a href="#Service">IService</a>::query())</font></p>
+<p style="margin-bottom: 0in"><font size="4" style="font-size: 14pt">TPB
+(transaction parameters block)</font></p>
 <p style="margin-bottom: 0in"><br/>
 
 </p>

@@ -115,7 +115,9 @@ enum rec_type {
 	rec_sql_roles,			// SQL roles
 	rec_mapping,			// Mapping of security names
 	rec_package,			// Package
-	rec_db_creator			// Database creator
+	rec_db_creator,			// Database creator
+	rec_publication,		// Publication
+	rec_pub_table			// Publication table
 };
 
 
@@ -199,7 +201,7 @@ Version 10: FB3.0.
 			See backup_capabilities in OdsDetection.h.
 
 Version 11: FB4.0.
-			SQL SECURITY feature.
+			SQL SECURITY feature, tables RDB$PUBLICATIONS/RDB$PUBLICATION_TABLES.
 */
 
 const int ATT_BACKUP_FORMAT		= 11;
@@ -630,7 +632,17 @@ enum att_type {
 
 	// Database creators
 	att_dbc_user = SERIES,
-	att_dbc_type
+	att_dbc_type,
+
+	// Publications
+	att_pub_name = SERIES,
+	att_pub_owner_name,
+	att_pub_active_flag,
+	att_pub_auto_enable,
+
+	// Publication tables
+	att_ptab_pub_name = SERIES,
+	att_ptab_table_name
 };
 
 
@@ -1075,6 +1087,7 @@ public:
 	Firebird::IRequest*	handles_get_character_sets_req_handle1;
 	Firebird::IRequest*	handles_get_chk_constraint_req_handle1;
 	Firebird::IRequest*	handles_get_collation_req_handle1;
+	Firebird::IRequest*	handles_get_db_creators_req_handle1;
 	Firebird::IRequest*	handles_get_exception_req_handle1;
 	Firebird::IRequest*	handles_get_field_dimensions_req_handle1;
 	Firebird::IRequest*	handles_get_field_req_handle1;
@@ -1093,17 +1106,18 @@ public:
 	Firebird::IRequest*	handles_get_index_req_handle2;
 	Firebird::IRequest*	handles_get_index_req_handle3;
 	Firebird::IRequest*	handles_get_index_req_handle4;
+	Firebird::IRequest*	handles_get_mapping_req_handle1;
 	Firebird::IRequest*	handles_get_package_req_handle1;
 	Firebird::IRequest*	handles_get_procedure_prm_req_handle1;
 	Firebird::IRequest*	handles_get_procedure_req_handle1;
+	Firebird::IRequest*	handles_get_pub_req_handle1;
+	Firebird::IRequest*	handles_get_pub_tab_req_handle1;
 	Firebird::IRequest*	handles_get_ranges_req_handle1;
 	Firebird::IRequest*	handles_get_ref_constraint_req_handle1;
 	Firebird::IRequest*	handles_get_rel_constraint_req_handle1;
 	Firebird::IRequest*	handles_get_relation_req_handle1;
 	Firebird::IRequest*	handles_get_security_class_req_handle1;
 	Firebird::IRequest*	handles_get_sql_roles_req_handle1;
-	Firebird::IRequest*	handles_get_mapping_req_handle1;
-	Firebird::IRequest* handles_db_creators_req_handle1;
 	Firebird::IRequest*	handles_get_trigger_message_req_handle1;
 	Firebird::IRequest*	handles_get_trigger_message_req_handle2;
 	Firebird::IRequest*	handles_get_trigger_old_req_handle1;

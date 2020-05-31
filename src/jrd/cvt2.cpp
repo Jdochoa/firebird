@@ -49,6 +49,7 @@
 #include "../jrd/req.h"
 #include "../jrd/constants.h"
 #include "../common/utils_proto.h"
+#include "../common/classes/Aligner.h"
 #include "../common/classes/VaryStr.h"
 
 using namespace Jrd;
@@ -76,19 +77,20 @@ const BYTE CVT2_compare_priority[] =
 	1,	// dtype_text
 	2,	// dtype_cstring
 	3,	// dtype_varying
-	// dtypes and 4, 5 are unused.
+	// dtypes and 4, 5 are unused
 	0, 0,
 	// packed through long also have their natural values in the table
 	6,	// dtype_packed
 	7,	// dtype_byte,
 	8,	// dtype_short
 	9,	// dtype_long
-	// Move quad up by one to make room for int64 at its proper place in the table.
+	// Move quad up by one to make room for int64 at its proper place in the table
 	11,	// dtype_quad
-	// Also leave space for int128, dec64 and dec 128.
-	15,	// dtype_real
-	16,	// dtype_double
-	17,	// dtype_d_float
+	// Leave space for int128
+	13,	// dtype_real
+	14,	// dtype_double
+	15,	// dtype_d_float
+	// Leave space for dec64 and dec128
 	18,	// dtype_sql_date
 	19,	// dtype_sql_time
 	// Leave space for dtype_sql_time_tz
@@ -100,10 +102,12 @@ const BYTE CVT2_compare_priority[] =
 	25,	// dtype_dbkey - compares with nothing except itself
 	26,	// dtype_boolean - compares with nothing except itself
 	12,	// dtype_int128 - go after quad
-	13,	// dec64 - go after dtype_int128
-	14,	// dec128 - go after dec64 and before real
+	16,	// dec64 - go after dtype_d_float 
+	17,	// dec128 - go after dec64 and before dtype_sql_date
 	20,	// dtype_sql_time_tz - go after dtype_sql_time
-	22	// dtype_timestamp_tz - go after dtype_timestamp
+	22,	// dtype_timestamp_tz - go after dtype_timestamp
+	99, // dtype_ex_time_tz - should not be used here
+	99  // dtype_ex_timestamp_tz - should not be used here
 };
 
 static inline int QUAD_COMPARE(const SQUAD* arg1, const SQUAD* arg2)
@@ -235,6 +239,7 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, Firebird::DecimalStatus decSt
 				return 1;
 			return -1;
 
+		case dtype_ex_time_tz:
 		case dtype_sql_time_tz:
 		case dtype_sql_time:
 			if (*(ULONG *) p1 == *(ULONG *) p2)
@@ -262,17 +267,46 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, Firebird::DecimalStatus decSt
 			return -1;
 
 		case dtype_dbkey:
+			// Compare canonical DBKEYs with respect to their
+			// relation IDs and record numbers
+			if (arg1->dsc_length == sizeof(RecordNumber::Packed) &&
+				arg2->dsc_length == sizeof(RecordNumber::Packed))
 			{
-				// keep old ttype_binary compare rules
-				USHORT l = MIN(arg1->dsc_length, arg2->dsc_length);
-				int rc = memcmp(p1, p2, l);
+				const auto dbkey1 = (const RecordNumber::Packed*) arg1->dsc_address;
+				const auto dbkey2 = (const RecordNumber::Packed*) arg2->dsc_address;
+
+				if (dbkey1->bid_relation_id > dbkey2->bid_relation_id)
+					return 1;
+				if (dbkey1->bid_relation_id < dbkey2->bid_relation_id)
+					return -1;
+
+				RecordNumber recno1, recno2;
+				recno1.bid_decode(dbkey1);
+				recno2.bid_decode(dbkey2);
+
+				if (recno1 > recno2)
+					return 1;
+				if (recno1 < recno2)
+					return -1;
+
+				return 0;
+			}
+			// Otherwise, use old ttype_binary compare rules
+			{
+				const auto l = MIN(arg1->dsc_length, arg2->dsc_length);
+				const auto rc = memcmp(p1, p2, l);
+
 				if (rc)
-				{
 					return rc;
-				}
-				return (arg1->dsc_length > l) ? 1 : (arg2->dsc_length > l) ? -1 : 0;
+				if (arg1->dsc_length > l)
+					return 1;
+				if (arg2->dsc_length > l)
+					return -1;
+
+				return 0;
 			}
 
+		case dtype_ex_timestamp_tz:
 		case dtype_timestamp_tz:
 		case dtype_timestamp:
 			if (((SLONG *) p1)[0] > ((SLONG *) p2)[0])
@@ -422,6 +456,7 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, Firebird::DecimalStatus decSt
 
 	switch (arg1->dsc_dtype)
 	{
+	case dtype_ex_timestamp_tz:
 	case dtype_timestamp_tz:
 		{
 			DSC desc;
@@ -446,6 +481,7 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, Firebird::DecimalStatus decSt
 			return CVT2_compare(arg1, &desc, 0);
 		}
 
+	case dtype_ex_time_tz:
 	case dtype_sql_time_tz:
 		{
 			DSC desc;
@@ -588,16 +624,47 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, Firebird::DecimalStatus decSt
 		if (arg2->isText())
 		{
 			UCHAR* p = NULL;
-			USHORT t; // unused later
-			USHORT length = CVT_get_string_ptr(arg2, &t, &p, NULL, 0, decSt);
+			USHORT ttype;
+			const USHORT length = CVT_get_string_ptr(arg2, &ttype, &p, NULL, 0, decSt);
 
-			USHORT l = MIN(arg1->dsc_length, length);
-			int rc = memcmp(arg1->dsc_address, p, l);
-			if (rc)
+			// Compare DBKEY with a compatible binary string with respect to
+			// relation IDs and record numbers
+			if (arg1->dsc_length == sizeof(RecordNumber::Packed) &&
+				ttype == ttype_binary && length == sizeof(RecordNumber::Packed))
 			{
-				return rc;
+				Aligner<RecordNumber::Packed> alignedNumber(p, length);
+
+				const auto dbkey1 = (const RecordNumber::Packed*) arg1->dsc_address;
+				const auto dbkey2 = (const RecordNumber::Packed*) alignedNumber;
+
+				if (dbkey1->bid_relation_id > dbkey2->bid_relation_id)
+					return 1;
+				if (dbkey1->bid_relation_id < dbkey2->bid_relation_id)
+					return -1;
+
+				RecordNumber recno1, recno2;
+				recno1.bid_decode(dbkey1);
+				recno2.bid_decode(dbkey2);
+
+				if (recno1 > recno2)
+					return 1;
+				if (recno1 < recno2)
+					return -1;
+
+				return 0;
 			}
-			return (arg1->dsc_length > l) ? 1 : (length > l) ? -1 : 0;
+
+			const auto l = MIN(arg1->dsc_length, length);
+			const auto rc = memcmp(arg1->dsc_address, p, l);
+
+			if (rc)
+				return rc;
+			if (arg1->dsc_length > l)
+				return 1;
+			if (length > l)
+				return -1;
+
+			return 0;
 		}
 		ERR_post(Arg::Gds(isc_wish_list) << Arg::Gds(isc_random) << "DB_KEY compare");
 		break;

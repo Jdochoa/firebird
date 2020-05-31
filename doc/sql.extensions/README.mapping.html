@@ -3,19 +3,19 @@
 <head>
 	<meta http-equiv="content-type" content="text/html; charset=utf-8"/>
 	<title></title>
-	<meta name="generator" content="LibreOffice 6.0.6.2 (Linux)"/>
+	<meta name="generator" content="LibreOffice 6.3.4.2.0 (Linux)"/>
 	<meta name="author" content="irina "/>
 	<meta name="created" content="2014-03-25T00:00:00.010305100"/>
-	<meta name="changed" content="2018-12-07T20:15:37.805856298"/>
+	<meta name="changed" content="2020-04-13T14:19:46.849216419"/>
 	<style type="text/css">
 		@page { margin: 2.01cm }
 		p { margin-bottom: 0.2cm }
 		a:link { so-language: zxx }
 	</style>
 </head>
-<body lang="ru-RU" dir="ltr">
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">SQL
-Language Extension: CREATE/ALTER/CREATE_OR_ALTER/DROP MAPPING</font></p>
+<body lang="ru-RU" dir="ltr"><p lang="en-US" style="margin-bottom: 0cm">
+<font size="4" style="font-size: 14pt">SQL Language Extension:
+CREATE/ALTER/CREATE_OR_ALTER/DROP MAPPING</font></p>
 <p style="margin-bottom: 0cm"><br/>
 
 </p>
@@ -67,20 +67,16 @@ objects in database – current_user and current_role. Mapping rule
 contains 4 parts of information: </font>
 </p>
 <ul>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">mapping
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">mapping
 	scope (is mapping local for current database or affects all
 	databases in cluster, including security database),</font></p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">mapping
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">mapping
 	name (mappings are named like all the other objects in database), </font>
 	</p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">from
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">from
 	what we map </font>
 	</p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">to
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">to
 	what we map.</font></p>
 </ul>
 <p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">Here
@@ -100,19 +96,15 @@ databases - not all of them need/use windows trusted authentication.</font></p>
 <p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">'From'
 part of mapping has 4 items:</font></p>
 <ul>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">authentication
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">authentication
 	source (plugin name or result of mapping in other database or use of
 	serverwide authentication or any method),</font></p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">name
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">name
 	of database where authentication succeeded, </font>
 	</p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">name
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">name
 	from which mapping is performed,</font></p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">type
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">type
 	of that name (username, role, OS group – this depends upon plugin
 	which added that name during authentication).</font></p>
 </ul>
@@ -125,11 +117,9 @@ definitely bad idea to mix different types of security objects.</font></p>
 <p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">'To'
 part has 2 items:</font></p>
 <ul>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">name
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">name
 	to which mapping is performed,</font></p>
-	<li/>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">type
+	<li><p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">type
 	of that name (only USER/ROLE are accepted here).</font></p>
 </ul>
 <p style="margin-bottom: 0cm"><br/>
@@ -289,35 +279,38 @@ DOMAIN\GROUP.</font></p>
 
 </p>
 <p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">Notice:</font></p>
+<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">-
+Global mapping works best if firebird 3 or higher version database is
+used as security database. If you plan to use other database as
+security one (using for example your own provider) please create in
+it table RDB$AUTH_MAPPING with structure repeating one in firebird 3
+database, public read access and SYSDBA-only write access.</span></font></p>
+<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">-
+</span></font><font size="4" style="font-size: 14pt"><span lang="en-US">Mappings
+work only with information, coming from authentication plugins or
+previously done mapping. Information present in DPB (particular SQL
+role name) is not affected by mappings and can not be changed using
+them.</span></font></p>
 <p style="margin-bottom: 0cm"><br/>
 
 </p>
-<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">Global
-mapping works best if firebird 3 or higher version database is used
-as security database. If you plan to use other database as security
-one (using for example your own provider) please create in it table
-RDB$AUTH_MAPPING with structure repeating one in firebird 3 database,
-public read access and SYSDBA-only write access.</font></p>
-<p lang="en-US" style="margin-bottom: 0cm"><br/>
+<p style="margin-bottom: 0cm"><br/>
 
 </p>
-<p lang="en-US" style="margin-bottom: 0cm"><br/>
-
-</p>
-<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">Tip:</span></font></p>
-<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">It’s
+<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">Tip:</font></p>
+<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">It’s
 relatively easy to accidentally make a database remotely inaccessible
-using CREATE MAPPING statement. For example: </span></font>
+using CREATE MAPPING statement. For example: </font>
 </p>
-<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">CREATE
-MAPPING BREAK_DB_1 USING * FROM ANY USER TO ROLE ROLE1;</span></font></p>
-<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">CREATE
-MAPPING BREAK_DB_2 USING * FROM ANY USER TO ROLE ROLE2;</span></font></p>
-<p style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt"><span lang="en-US">This
+<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">CREATE
+MAPPING BREAK_DB_1 USING * FROM ANY USER TO ROLE ROLE1;</font></p>
+<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">CREATE
+MAPPING BREAK_DB_2 USING * FROM ANY USER TO ROLE ROLE2;</font></p>
+<p lang="en-US" style="margin-bottom: 0cm"><font size="4" style="font-size: 14pt">This
 will disallow any user (including SYSDBA) to connect. Luckily
 mappings are not processed when database is used in embedded mode,
 i.e. in such a case one should attach to database using embedded
-access and fix bad mappings.</span></font></p>
+access and fix bad mappings.</font></p>
 <p style="margin-bottom: 0cm"><br/>
 
 </p>

@@ -313,6 +313,11 @@ public:
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
 	virtual void execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction);
 
+	virtual bool mustBeReplicated() const
+	{
+		return false;
+	}
+
 protected:
 	virtual void putErrorPrefix(Firebird::Arg::StatusVector& statusVector)
 	{
@@ -342,6 +347,11 @@ public:
 	virtual void checkPermission(thread_db* tdbb, jrd_tra* transaction);
 	virtual Firebird::string internalPrint(NodePrinter& printer) const;
 	virtual void execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jrd_tra* transaction);
+
+	virtual bool mustBeReplicated() const
+	{
+		return false;
+	}
 
 protected:
 	virtual void putErrorPrefix(Firebird::Arg::StatusVector& statusVector)
@@ -1300,7 +1310,8 @@ public:
 			TYPE_ALTER_COL_TYPE,
 			TYPE_DROP_COLUMN,
 			TYPE_DROP_CONSTRAINT,
-			TYPE_ALTER_SQL_SECURITY
+			TYPE_ALTER_SQL_SECURITY,
+			TYPE_ALTER_PUBLICATION
 		};
 
 		explicit Clause(MemoryPool& p, Type aType)
@@ -1488,20 +1499,15 @@ public:
 		Firebird::MetaName name;
 	};
 
-	struct AlterSqlSecurityClause : public Clause
-	{
-		explicit AlterSqlSecurityClause(MemoryPool& p)
-			: Clause(p, TYPE_ALTER_SQL_SECURITY)
-		{
-		}
-
-		Nullable<bool> ssDefiner;
-	};
-
 	RelationNode(MemoryPool& p, RelationSourceNode* aDsqlNode);
 
 	static void deleteLocalField(thread_db* tdbb, jrd_tra* transaction,
 		const Firebird::MetaName& relationName, const Firebird::MetaName& fieldName);
+
+	static void addToPublication(thread_db* tdbb, jrd_tra* transaction,
+		const Firebird::MetaName& tableName, const Firebird::MetaName& pubTame);
+	static void dropFromPublication(thread_db* tdbb, jrd_tra* transaction,
+		const Firebird::MetaName& tableName, const Firebird::MetaName& pubTame);
 
 protected:
 	virtual Firebird::string internalPrint(NodePrinter& printer) const
@@ -1546,6 +1552,7 @@ public:
 	Firebird::MetaName name;
 	Firebird::Array<NestConst<Clause> > clauses;
 	Nullable<bool> ssDefiner;
+	Nullable<bool> replicationState;
 };
 
 
@@ -2381,6 +2388,10 @@ public:
 	static const unsigned CLAUSE_END_BACKUP			= 0x02;
 	static const unsigned CLAUSE_DROP_DIFFERENCE	= 0x04;
 	static const unsigned CLAUSE_CRYPT				= 0x08;
+	static const unsigned CLAUSE_ENABLE_PUB			= 0x10;
+	static const unsigned CLAUSE_DISABLE_PUB		= 0x20;
+	static const unsigned CLAUSE_PUB_ADD_TABLE		= 0x40;
+	static const unsigned CLAUSE_PUB_DROP_TABLE		= 0x80;
 
 	static const unsigned RDB_DATABASE_MASK =
 		CLAUSE_BEGIN_BACKUP | CLAUSE_END_BACKUP | CLAUSE_DROP_DIFFERENCE;
@@ -2397,7 +2408,8 @@ public:
 		  setDefaultCollation(p),
 		  files(p),
 		  cryptPlugin(p),
-		  keyName(p)
+		  keyName(p),
+		  pubTables(p)
 	{
 	}
 
@@ -2440,6 +2452,7 @@ public:
 	Firebird::MetaName cryptPlugin;
 	Firebird::MetaName keyName;
 	Nullable<bool> ssDefiner;
+	Firebird::Array<Firebird::MetaName> pubTables;
 };
 
 

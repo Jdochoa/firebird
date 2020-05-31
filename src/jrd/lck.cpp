@@ -156,7 +156,7 @@ inline bool CONVERT(thread_db* tdbb, CheckStatusWrapper* statusVector, Lock* loc
 
 	return lock->lck_compatible ?
 		internal_enqueue(tdbb, statusVector, lock, level, wait, true) :
-		dbb->dbb_lock_mgr->convert(tdbb, statusVector, lock->lck_id, level, wait, lock->lck_ast,
+		dbb->lockManager()->convert(tdbb, statusVector, lock->lck_id, level, wait, lock->lck_ast,
 			lock->lck_object);
 }
 
@@ -167,7 +167,7 @@ inline void DEQUEUE(thread_db* tdbb, Lock* lock)
 	if (lock->lck_compatible)
 		internal_dequeue(tdbb, lock);
 	else
-		dbb->dbb_lock_mgr->dequeue(lock->lck_id);
+		dbb->lockManager()->dequeue(lock->lck_id);
 }
 
 inline USHORT DOWNGRADE(thread_db* tdbb, Lock* lock)
@@ -178,7 +178,7 @@ inline USHORT DOWNGRADE(thread_db* tdbb, Lock* lock)
 
 	USHORT ret = lock->lck_compatible ?
 		internal_downgrade(tdbb, &statusVector, lock) :
-		dbb->dbb_lock_mgr->downgrade(tdbb, &statusVector, lock->lck_id);
+		dbb->lockManager()->downgrade(tdbb, &statusVector, lock->lck_id);
 
 	fb_assert(statusVector.isEmpty());
 
@@ -422,7 +422,7 @@ bool LCK_cancel_wait(Jrd::Attachment* attachment)
 	Database *dbb = attachment->att_database;
 
 	if (attachment->att_wait_lock)
-		return dbb->dbb_lock_mgr->cancelWait(attachment->att_wait_lock->lck_owner_handle);
+		return dbb->lockManager()->cancelWait(attachment->att_wait_lock->lck_owner_handle);
 
 	return false;
 }
@@ -496,7 +496,8 @@ void LCK_fini(thread_db* tdbb, enum lck_owner_t owner_type)
 		break;
 	}
 
-	dbb->dbb_lock_mgr->shutdownOwner(tdbb, owner_handle_ptr);
+	if (*owner_handle_ptr)
+		dbb->lockManager()->shutdownOwner(tdbb, owner_handle_ptr);
 }
 
 
@@ -555,6 +556,7 @@ static lck_owner_t get_owner_type(enum lck_t lock_type)
 	case LCK_crypt_status:
 	case LCK_tpc_init:
 	case LCK_tpc_block:
+	case LCK_repl_state:
 		owner_type = LCK_OWNER_database;
 		break;
 
@@ -579,6 +581,7 @@ static lck_owner_t get_owner_type(enum lck_t lock_type)
 	case LCK_rel_gc:
 	case LCK_record_gc:
 	case LCK_alter_database:
+	case LCK_repl_tables:
 		owner_type = LCK_OWNER_attachment;
 		break;
 
@@ -627,7 +630,7 @@ void LCK_init(thread_db* tdbb, enum lck_owner_t owner_type)
 
 	FbLocalStatus statusVector;
 
-	if (!dbb->dbb_lock_mgr->initializeOwner(&statusVector, owner_id, owner_type, owner_handle_ptr))
+	if (!dbb->lockManager()->initializeOwner(&statusVector, owner_id, owner_type, owner_handle_ptr))
 	{
 		if (statusVector[1] == isc_lockmanerr)
 		{
@@ -748,7 +751,7 @@ LOCK_DATA_T LCK_query_data(thread_db* tdbb, enum lck_t lock_type, USHORT aggrega
 	SET_TDBB(tdbb);
 	Database* const dbb = tdbb->getDatabase();
 
-	return dbb->dbb_lock_mgr->queryData(lock_type, aggregate);
+	return dbb->lockManager()->queryData(lock_type, aggregate);
 }
 
 
@@ -770,7 +773,7 @@ LOCK_DATA_T LCK_read_data(thread_db* tdbb, Lock* lock)
 	fb_assert(LCK_CHECK_LOCK(lock));
 
 	const LOCK_DATA_T data =
-		dbb->dbb_lock_mgr->readData2(lock->lck_type,
+		dbb->lockManager()->readData2(lock->lck_type,
 									 lock->getKeyPtr(), lock->lck_length,
 									 lock->lck_owner_handle);
 	fb_assert(LCK_CHECK_LOCK(lock));
@@ -835,7 +838,7 @@ void LCK_re_post(thread_db* tdbb, Lock* lock)
 		return;
 	}
 
-	dbb->dbb_lock_mgr->repost(tdbb, lock->lck_ast, lock->lck_object, lock->lck_owner_handle);
+	dbb->lockManager()->repost(tdbb, lock->lck_ast, lock->lck_object, lock->lck_owner_handle);
 
 	fb_assert(LCK_CHECK_LOCK(lock));
 }
@@ -858,7 +861,7 @@ void LCK_write_data(thread_db* tdbb, Lock* lock, LOCK_DATA_T data)
 
 	fb_assert(LCK_CHECK_LOCK(lock));
 
-	dbb->dbb_lock_mgr->writeData(lock->lck_id, data);
+	dbb->lockManager()->writeData(lock->lck_id, data);
 	lock->lck_data = data;
 
 	fb_assert(LCK_CHECK_LOCK(lock));
@@ -974,7 +977,7 @@ static void enqueue(thread_db* tdbb, CheckStatusWrapper* statusVector, Lock* loc
 
 	fb_assert(LCK_CHECK_LOCK(lock));
 
-	lock->lck_id = dbb->dbb_lock_mgr->enqueue(tdbb, statusVector, lock->lck_id,
+	lock->lck_id = dbb->lockManager()->enqueue(tdbb, statusVector, lock->lck_id,
 		lock->lck_type, lock->getKeyPtr(), lock->lck_length,
 		level, lock->lck_ast, lock->lck_object, lock->lck_data, wait,
 		lock->lck_owner_handle);
@@ -1316,7 +1319,7 @@ static void internal_dequeue(thread_db* tdbb, Lock* lock)
 	Lock* match;
 	if (hash_remove_lock(lock, &match))
 	{
-		if (!dbb->dbb_lock_mgr->dequeue(lock->lck_id))
+		if (!dbb->lockManager()->dequeue(lock->lck_id))
 		{
 			bug_lck("LOCK_deq() failed in Lock:internal_dequeue");
 		}
@@ -1364,7 +1367,7 @@ static USHORT internal_downgrade(thread_db* tdbb, CheckStatusWrapper* statusVect
 
 	if (level < first->lck_physical)
 	{
-		if (dbb->dbb_lock_mgr->convert(tdbb, statusVector, first->lck_id, level, LCK_NO_WAIT,
+		if (dbb->lockManager()->convert(tdbb, statusVector, first->lck_id, level, LCK_NO_WAIT,
 				external_ast, first))
 		{
 			for (Lock* lock = first; lock; lock = lock->lck_identical)
@@ -1431,7 +1434,7 @@ static bool internal_enqueue(thread_db* tdbb, CheckStatusWrapper* statusVector, 
 
 			if (level > match->lck_physical)
 			{
-				if (!dbb->dbb_lock_mgr->convert(tdbb, statusVector, match->lck_id, level, wait,
+				if (!dbb->lockManager()->convert(tdbb, statusVector, match->lck_id, level, wait,
 						external_ast, lock))
 				{
 					return false;
@@ -1460,7 +1463,7 @@ static bool internal_enqueue(thread_db* tdbb, CheckStatusWrapper* statusVector, 
 	// enqueue the lock, but swap out the ast and the ast argument
 	// with the local ast handler, passing it the lock block itself
 
-	lock->lck_id = dbb->dbb_lock_mgr->enqueue(tdbb, statusVector, lock->lck_id,
+	lock->lck_id = dbb->lockManager()->enqueue(tdbb, statusVector, lock->lck_id,
 		lock->lck_type, lock->getKeyPtr(), lock->lck_length,
 		level, external_ast, lock, lock->lck_data, wait, lock->lck_owner_handle);
 

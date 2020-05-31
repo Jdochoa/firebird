@@ -965,6 +965,10 @@ static const struct {
 	{335545262, -402}, /* 942 cannot_update_old_blob */
 	{335545263, -402}, /* 943 cannot_read_new_blob */
 	{335545264, -901}, /* 944 dyn_no_create_priv */
+	{335545265, -901}, /* 945 suspend_without_returns */
+	{335545266,  304}, /* 946 truncate_warn */
+	{335545267,  304}, /* 947 truncate_monitor */
+	{335545268,  304}, /* 948 truncate_context */
 	{335740929, -901}, /*   1 gfix_db_name */
 	{335740930, -901}, /*   2 gfix_invalid_sw */
 	{335740932, -901}, /*   4 gfix_incmp_sw */

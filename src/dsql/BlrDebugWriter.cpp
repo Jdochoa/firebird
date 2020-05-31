@@ -58,21 +58,9 @@ void BlrDebugWriter::putDebugSrcInfo(ULONG line, ULONG col)
 {
 	debugData.add(fb_dbg_map_src2blr);
 
-	debugData.add(line);
-	debugData.add(line >> 8);
-	debugData.add(line >> 16);
-	debugData.add(line >> 24);
-
-	debugData.add(col);
-	debugData.add(col >> 8);
-	debugData.add(col >> 16);
-	debugData.add(col >> 24);
-
-	const ULONG offset = (getBlrData().getCount() - getBaseOffset());
-	debugData.add(offset);
-	debugData.add(offset >> 8);
-	debugData.add(offset >> 16);
-	debugData.add(offset >> 24);
+	putValue(line);
+	putValue(col);
+	putBlrOffset();
 }
 
 void BlrDebugWriter::putDebugVariable(USHORT number, const MetaName& name)
@@ -132,10 +120,7 @@ void BlrDebugWriter::putDebugSubFunction(DeclareSubFuncNode* subFuncNode)
 
 	HalfStaticArray<UCHAR, 128>& subDebugData = subFuncNode->blockScratch->debugData;
 	const ULONG count = ULONG(subDebugData.getCount());
-	debugData.add(UCHAR(count));
-	debugData.add(UCHAR(count >> 8));
-	debugData.add(UCHAR(count >> 16));
-	debugData.add(UCHAR(count >> 24));
+	putValue(count);
 	debugData.add(subDebugData.begin(), count);
 }
 
@@ -152,11 +137,22 @@ void BlrDebugWriter::putDebugSubProcedure(DeclareSubProcNode* subProcNode)
 
 	HalfStaticArray<UCHAR, 128>& subDebugData = subProcNode->blockScratch->debugData;
 	const ULONG count = ULONG(subDebugData.getCount());
-	debugData.add(UCHAR(count));
-	debugData.add(UCHAR(count >> 8));
-	debugData.add(UCHAR(count >> 16));
-	debugData.add(UCHAR(count >> 24));
+	putValue(count);
 	debugData.add(subDebugData.begin(), count);
+}
+
+void BlrDebugWriter::putValue(ULONG val)
+{
+	debugData.add(val);
+	debugData.add(val >> 8);
+	debugData.add(val >> 16);
+	debugData.add(val >> 24);
+}
+
+void BlrDebugWriter::putBlrOffset()
+{
+	const ULONG offset = (getBlrData().getCount() - getBaseOffset());
+	putValue(offset);
 }
 
 }	// namespace Jrd

@@ -334,6 +334,10 @@ public:
 	void moveNameToIndex(CheckStatusWrapper* status, const char* name, unsigned index);
 	unsigned addField(CheckStatusWrapper* status);
 	IMessageMetadata* getMetadata(CheckStatusWrapper* status);
+	void setField(CheckStatusWrapper* status, unsigned index, const char* field);
+	void setRelation(CheckStatusWrapper* status, unsigned index, const char* relation);
+	void setOwner(CheckStatusWrapper* status, unsigned index, const char* owner);
+	void setAlias(CheckStatusWrapper* status, unsigned index, const char* alias);
 
 private:
 	RefPtr<MsgMetadata> msgMetadata;

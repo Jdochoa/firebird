@@ -2963,4 +2963,15 @@ void* operator new[](size_t s) FB_THROW (OOM_EXCEPTION)
 {
 	return MemoryPool::globalAlloc(s ALLOC_ARGS);
 }
+
+void operator delete(void* mem) FB_NOTHROW
+{
+	MemoryPool::globalFree(mem);
+}
+
+void operator delete[](void* mem) FB_NOTHROW
+{
+	MemoryPool::globalFree(mem);
+}
+
 #endif // DEBUG_GDS_ALLOC

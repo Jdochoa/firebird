@@ -19,6 +19,7 @@
  */
 
 #include "firebird.h"
+#include "firebird/impl/blr.h"
 #include "../common/TimeZoneUtil.h"
 #include "../common/classes/BaseStream.h"
 #include "../common/classes/MsgPrint.h"
@@ -27,7 +28,8 @@
 #include "../dsql/ExprNodes.h"
 #include "../dsql/StmtNodes.h"
 #include "../jrd/align.h"
-#include "firebird/impl/blr.h"
+#include "../jrd/ids.h"
+#include "../jrd/ini.h"
 #include "../jrd/tra.h"
 #include "../jrd/Coercion.h"
 #include "../jrd/Function.h"
@@ -86,6 +88,7 @@ static void dsqlSetParameterName(DsqlCompilerScratch*, ExprNode*, const ValueExp
 static void dsqlSetParametersName(DsqlCompilerScratch*, CompoundStmtNode*, const RecordSourceNode*);
 
 static void cleanupRpb(thread_db* tdbb, record_param* rpb);
+static void forceWriteLock(thread_db* tdbb, record_param* rpb, jrd_tra* transaction);
 static void makeValidation(thread_db* tdbb, CompilerScratch* csb, StreamType stream,
 	Array<ValidateInfo>& validations);
 static StmtNode* pass1ExpandView(thread_db* tdbb, CompilerScratch* csb, StreamType orgStream,
@@ -94,12 +97,14 @@ static RelationSourceNode* pass1Update(thread_db* tdbb, CompilerScratch* csb, jr
 	const TrigVector* trigger, StreamType stream, StreamType updateStream, SecurityClass::flags_t priv,
 	jrd_rel* view, StreamType viewStream, StreamType viewUpdateStream);
 static void pass1Validations(thread_db* tdbb, CompilerScratch* csb, Array<ValidateInfo>& validations);
+static ForNode* pass2FindForNode(StmtNode* node, StreamType stream);
 static void postTriggerAccess(CompilerScratch* csb, jrd_rel* ownerRelation,
 	ExternalAccess::exa_act operation, jrd_rel* view);
 static void preModifyEraseTriggers(thread_db* tdbb, TrigVector** trigs,
 	StmtNode::WhichTrigger whichTrig, record_param* rpb, record_param* rec, TriggerAction op);
 static void preprocessAssignments(thread_db* tdbb, CompilerScratch* csb,
 	StreamType stream, CompoundStmtNode* compoundNode, const Nullable<OverrideClause>* insertOverride);
+static void restartRequest(const jrd_req* request, jrd_tra* transaction);
 static void validateExpressions(thread_db* tdbb, const Array<ValidateInfo>& validations);
 
 }	// namespace Jrd
@@ -659,9 +664,12 @@ const StmtNode* BlockNode::execute(thread_db* tdbb, jrd_req* request, ExeState* 
 				return parentStmt;
 			}
 
+			// Skip PSQL exception handlers when request restart is in progress
+			const bool skipHandlers = (transaction->tra_flags & TRA_ex_restart);
+
 			const StmtNode* temp = parentStmt;
 
-			if (handlers && handlers->statements.hasData())
+			if (handlers && handlers->statements.hasData() && !skipHandlers)
 			{
 				// First of all rollback failed work
 				if (!(transaction->tra_flags & TRA_system))
@@ -2276,6 +2284,9 @@ DmlNode* EraseNode::parse(thread_db* /*tdbb*/, MemoryPool& pool, CompilerScratch
 	EraseNode* node = FB_NEW_POOL(pool) EraseNode(pool);
 	node->stream = csb->csb_rpt[n].csb_stream;
 
+	if (csb->csb_blr_reader.peekByte() == blr_marks)
+		node->marks |= PAR_marks(csb);
+
 	return node;
 }
 
@@ -2290,6 +2301,7 @@ StmtNode* EraseNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	if (dsqlCursorName.hasData() && dsqlScratch->isPsql())
 	{
 		node->dsqlContext = dsqlPassCursorContext(dsqlScratch, dsqlCursorName, relation);
+		node->marks |= StmtNode::MARK_POSITIONED;
 
 		// Process old context values.
 		dsqlScratch->context->push(node->dsqlContext);
@@ -2313,7 +2325,10 @@ StmtNode* EraseNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	RseNode* rse;
 
 	if (dsqlCursorName.hasData())
+	{
 		rse = dsqlPassCursorReference(dsqlScratch, dsqlCursorName, relation);
+		node->marks |= StmtNode::MARK_POSITIONED;
+	}
 	else
 	{
 		rse = FB_NEW_POOL(dsqlScratch->getPool()) RseNode(dsqlScratch->getPool());
@@ -2367,6 +2382,7 @@ string EraseNode::internalPrint(NodePrinter& printer) const
 	NODE_PRINT(printer, statement);
 	NODE_PRINT(printer, subStatement);
 	NODE_PRINT(printer, stream);
+	NODE_PRINT(printer, marks);
 
 	return "EraseNode";
 }
@@ -2377,41 +2393,24 @@ void EraseNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 	const dsql_ctx* context;
 
 	if (dsqlContext)
-	{
 		context = dsqlContext;
-
-		if (statement)
-		{
-			dsqlScratch->appendUChar(blr_begin);
-			statement->genBlr(dsqlScratch);
-			dsqlScratch->appendUChar(blr_erase);
-			GEN_stuff_context(dsqlScratch, context);
-			dsqlScratch->appendUChar(blr_end);
-		}
-		else
-		{
-			dsqlScratch->appendUChar(blr_erase);
-			GEN_stuff_context(dsqlScratch, context);
-		}
-	}
 	else
-	{
 		context = dsqlRelation->dsqlContext;
 
-		if (statement)
-		{
-			dsqlScratch->appendUChar(blr_begin);
-			statement->genBlr(dsqlScratch);
-			dsqlScratch->appendUChar(blr_erase);
-			GEN_stuff_context(dsqlScratch, context);
-			dsqlScratch->appendUChar(blr_end);
-		}
-		else
-		{
-			dsqlScratch->appendUChar(blr_erase);
-			GEN_stuff_context(dsqlScratch, context);
-		}
+	if (statement)
+	{
+		dsqlScratch->appendUChar(blr_begin);
+		statement->genBlr(dsqlScratch);
 	}
+
+	dsqlScratch->appendUChar(blr_erase);
+	GEN_stuff_context(dsqlScratch, context);
+
+	if (marks)
+		dsqlScratch->putBlrMarkers(marks);
+
+	if (statement)
+		dsqlScratch->appendUChar(blr_end);
 
 	if (message)
 		dsqlScratch->appendUChar(blr_end);
@@ -2532,6 +2531,30 @@ EraseNode* EraseNode::pass2(thread_db* tdbb, CompilerScratch* csb)
 	doPass2(tdbb, csb, statement.getAddress(), this);
 	doPass2(tdbb, csb, subStatement.getAddress(), this);
 
+	const jrd_rel* const relation = csb->csb_rpt[stream].csb_relation;
+
+	if (relation)
+	{
+		// Deletion from MON$ tables uses the attachment ID and the system flag
+		// under the hood, so these field should be added as implicitly referenced
+
+		if (relation->rel_id == rel_mon_attachments)
+		{
+			SBM_SET(tdbb->getDefaultPool(), &csb->csb_rpt[stream].csb_fields,
+					f_mon_att_id); // MON$ATTACHMENT_ID
+			SBM_SET(tdbb->getDefaultPool(), &csb->csb_rpt[stream].csb_fields,
+					f_mon_att_sys_flag); // MON$SYSTEM_FLAG
+		}
+		else if (relation->rel_id == rel_mon_statements)
+		{
+			SBM_SET(tdbb->getDefaultPool(), &csb->csb_rpt[stream].csb_fields,
+					f_mon_stmt_att_id); // MON$ATTACHMENT_ID
+		}
+	}
+
+	if (!(marks & StmtNode::MARK_POSITIONED))
+		forNode = pass2FindForNode(parentStmt, stream);
+
 	impureOffset = CMP_impure(csb, sizeof(SLONG));
 	csb->csb_rpt[stream].csb_flags |= csb_update;
 
@@ -2544,6 +2567,7 @@ const StmtNode* EraseNode::execute(thread_db* tdbb, jrd_req* request, ExeState* 
 
 	if (request->req_operation == jrd_req::req_unwind)
 		retNode = parentStmt;
+
 	else if (request->req_operation == jrd_req::req_return && subStatement)
 	{
 		if (!exeState->topNode)
@@ -2621,6 +2645,12 @@ const StmtNode* EraseNode::erase(thread_db* tdbb, jrd_req* request, WhichTrigger
 	request->req_operation = jrd_req::req_return;
 	RLCK_reserve_relation(tdbb, transaction, relation, true);
 
+	if (forNode && forNode->isWriteLockMode(request))
+	{
+		forceWriteLock(tdbb, rpb, transaction);
+		return parentStmt;
+	}
+
 	// If the stream was sorted, the various fields in the rpb are probably junk.
 	// Just to make sure that everything is cool, refetch and release the record.
 
@@ -2644,7 +2674,20 @@ const StmtNode* EraseNode::erase(thread_db* tdbb, jrd_req* request, WhichTrigger
 		VirtualTable::erase(tdbb, rpb);
 	else if (!relation->rel_view_rse)
 	{
-		VIO_erase(tdbb, rpb, transaction);
+		// VIO_erase returns false if there is an update conflict in Read Consistency
+		// transaction. Before returning false it disables statement-level snapshot
+		// (via setting req_update_conflict flag) so re-fetch should see new data.
+
+		if (!VIO_erase(tdbb, rpb, transaction))
+		{
+			forceWriteLock(tdbb, rpb, transaction);
+
+			if (!forNode)
+				restartRequest(request, transaction);
+
+			forNode->setWriteLockMode(request);
+			return parentStmt;
+		}
 		REPL_erase(tdbb, rpb, transaction);
 	}
 
@@ -3957,7 +4000,14 @@ const StmtNode* InAutonomousTransactionNode::execute(thread_db* tdbb, jrd_req* r
 		jrd_tra* const org_transaction = request->req_transaction;
 		fb_assert(tdbb->getTransaction() == org_transaction);
 
-		jrd_tra* const transaction = TRA_start(tdbb, org_transaction->tra_flags,
+
+		ULONG transaction_flags = org_transaction->tra_flags;
+
+		// Replace Read Consistency by Concurrecy isolation mode
+		if (transaction_flags & TRA_read_consistency)
+			transaction_flags &= ~(TRA_read_committed | TRA_read_consistency);
+
+		jrd_tra* const transaction = TRA_start(tdbb, transaction_flags,
 											   org_transaction->tra_lock_timeout,
 											   org_transaction);
 
@@ -3982,12 +4032,6 @@ const StmtNode* InAutonomousTransactionNode::execute(thread_db* tdbb, jrd_req* r
 		const Savepoint* const savepoint = transaction->startSavepoint();
 		impure->savNumber = savepoint->getNumber();
 
-		if ((transaction->tra_flags & TRA_read_committed) &&
-			(transaction->tra_flags & TRA_read_consistency))
-		{
-			TRA_setup_request_snapshot(tdbb, request, true);
-		}
-
 		return action;
 	}
 
@@ -3998,16 +4042,6 @@ const StmtNode* InAutonomousTransactionNode::execute(thread_db* tdbb, jrd_req* r
 		return parentStmt;
 
 	fb_assert(transaction->tra_number == impure->traNumber);
-
-	if (request->req_operation == jrd_req::req_return ||
-		request->req_operation == jrd_req::req_unwind)
-	{
-		if ((transaction->tra_flags & TRA_read_committed) &&
-			(transaction->tra_flags & TRA_read_consistency))
-		{
-			TRA_release_request_snapshot(tdbb, request);
-		}
-	}
 
 	switch (request->req_operation)
 	{
@@ -4804,12 +4838,16 @@ DmlNode* ForNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* csb,
 {
 	ForNode* node = FB_NEW_POOL(pool) ForNode(pool);
 
+	if (csb->csb_blr_reader.peekByte() == blr_marks)
+		node->forUpdate = (PAR_marks(csb) & StmtNode::MARK_FOR_UPDATE) != 0;
+
 	if (csb->csb_blr_reader.peekByte() == (UCHAR) blr_stall)
 		node->stall = PAR_parse_stmt(tdbb, csb);
 
 	AutoSetRestore<ForNode*> autoCurrentForNode(&csb->csb_currentForNode, node);
 
 	if (csb->csb_blr_reader.peekByte() == (UCHAR) blr_rse ||
+		csb->csb_blr_reader.peekByte() == (UCHAR) blr_lateral_rse ||
 		csb->csb_blr_reader.peekByte() == (UCHAR) blr_singular ||
 		csb->csb_blr_reader.peekByte() == (UCHAR) blr_scrollable)
 	{
@@ -4898,6 +4936,8 @@ string ForNode::internalPrint(NodePrinter& printer) const
 	NODE_PRINT(printer, statement);
 	NODE_PRINT(printer, cursor);
 	NODE_PRINT(printer, parBlrBeginCnt);
+	NODE_PRINT(printer, forUpdate);
+	NODE_PRINT(printer, withLock);
 
 	return "ForNode";
 }
@@ -4915,6 +4955,9 @@ void ForNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 	// Generate FOR loop
 
 	dsqlScratch->appendUChar(blr_for);
+
+	if (forUpdate)
+		dsqlScratch->putBlrMarkers(StmtNode::MARK_FOR_UPDATE);
 
 	if (!statement || dsqlForceSingular)
 		dsqlScratch->appendUChar(blr_singular);
@@ -4981,7 +5024,10 @@ StmtNode* ForNode::pass2(thread_db* tdbb, CompilerScratch* csb)
 	// as implicit cursors are always positioned in a valid record, and the name is
 	// only used to raise isc_cursor_not_positioned.
 
-	impureOffset = CMP_impure(csb, sizeof(SavNumber));
+	if (rse->flags & RseNode::FLAG_WRITELOCK)
+		withLock = true;
+
+	impureOffset = CMP_impure(csb, sizeof(Impure));
 
 	return this;
 }
@@ -4989,17 +5035,21 @@ StmtNode* ForNode::pass2(thread_db* tdbb, CompilerScratch* csb)
 const StmtNode* ForNode::execute(thread_db* tdbb, jrd_req* request, ExeState* /*exeState*/) const
 {
 	jrd_tra* transaction = request->req_transaction;
+	Impure* impure = request->getImpure<Impure>(impureOffset);
 
 	switch (request->req_operation)
 	{
 		case jrd_req::req_evaluate:
-			*request->getImpure<SavNumber>(impureOffset) = 0;
+			// initialize impure values
+			impure->savepoint = 0;
+			impure->writeLockMode = false;
+
 			if (!(transaction->tra_flags & TRA_system) &&
 				transaction->tra_save_point &&
 				transaction->tra_save_point->hasChanges())
 			{
 				const Savepoint* const savepoint = transaction->startSavepoint();
-				*request->getImpure<SavNumber>(impureOffset) = savepoint->getNumber();
+				impure->savepoint = savepoint->getNumber();
 			}
 			cursor->open(tdbb);
 			request->req_records_affected.clear();
@@ -5011,11 +5061,32 @@ const StmtNode* ForNode::execute(thread_db* tdbb, jrd_req* request, ExeState* /*
 			// fall into
 
 		case jrd_req::req_sync:
-			if (cursor->fetchNext(tdbb))
 			{
-				request->req_operation = jrd_req::req_evaluate;
-				return statement;
+				const bool fetched = cursor->fetchNext(tdbb);
+				if (withLock)
+				{
+					const jrd_req* top_request = request->req_snapshot.m_owner;
+					if ((top_request) && (top_request->req_flags & req_update_conflict))
+						impure->writeLockMode = true;
+				}
+
+				if (fetched)
+				{
+					if (impure->writeLockMode && withLock)
+					{
+						// Skip statement execution and fetch (and try to lock) next record.
+						request->req_operation = jrd_req::req_sync;
+						return this;
+					}
+
+					request->req_operation = jrd_req::req_evaluate;
+					return statement;
+				}
 			}
+
+			if (impure->writeLockMode)
+				restartRequest(request, transaction);
+
 			request->req_operation = jrd_req::req_return;
 			// fall into
 
@@ -5036,7 +5107,7 @@ const StmtNode* ForNode::execute(thread_db* tdbb, jrd_req* request, ExeState* /*
 
 		default:
 		{
-			const SavNumber savNumber = *request->getImpure<SavNumber>(impureOffset);
+			const SavNumber savNumber = impure->savepoint;
 
 			if (savNumber)
 			{
@@ -5059,6 +5130,21 @@ const StmtNode* ForNode::execute(thread_db* tdbb, jrd_req* request, ExeState* /*
 	return NULL;
 }
 
+
+bool ForNode::isWriteLockMode(jrd_req* request) const
+{
+	const Impure* impure = request->getImpure<Impure>(impureOffset);
+	return impure->writeLockMode;
+}
+
+
+void ForNode::setWriteLockMode(jrd_req* request) const
+{
+	Impure* impure = request->getImpure<Impure>(impureOffset);
+	fb_assert(!impure->writeLockMode);
+
+	impure->writeLockMode = true;
+}
 
 //--------------------
 
@@ -5382,7 +5468,7 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	BoolExprNode* matchedConditions = NULL;
 	BoolExprNode* notMatchedConditions = NULL;
 
-	for (ObjectsArray<Matched>::iterator matched = whenMatched.begin();
+	for (auto matched = whenMatched.begin();
 		 matched != whenMatched.end();
 		 ++matched)
 	{
@@ -5395,7 +5481,7 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 		}
 	}
 
-	for (ObjectsArray<NotMatched>::iterator notMatched = whenNotMatched.begin();
+	for (auto notMatched = whenNotMatched.begin();
 		 notMatched != whenNotMatched.end();
 		 ++notMatched)
 	{
@@ -5451,6 +5537,8 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	if (returning)
 		forNode->dsqlForceSingular = true;
 
+	forNode->forUpdate = true;
+
 	// Get the already processed relations.
 	RseNode* processedRse = nodeAs<RseNode>(forNode->rse->dsqlStreams->items[0]);
 	source = processedRse->dsqlStreams->items[0];
@@ -5465,9 +5553,9 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 	StmtNode* update = NULL;
 	IfNode* lastIf = NULL;
 
-	for (ObjectsArray<Matched>::iterator matched = whenMatched.begin();
+	for (auto nextMatched = whenMatched.begin(), matched = nextMatched++;
 		 matched != whenMatched.end();
-		 ++matched)
+		 matched = nextMatched++)
 	{
 		IfNode* thisIf = FB_NEW_POOL(pool) IfNode(pool);
 
@@ -5488,6 +5576,7 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 
 			// Build the MODIFY node.
 			ModifyNode* modify = FB_NEW_POOL(pool) ModifyNode(pool);
+			modify->marks |= StmtNode::MARK_MERGE;
 			thisIf->trueAction = modify;
 
 			dsql_ctx* const oldContext = dsqlGetContext(target);
@@ -5576,6 +5665,7 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 		{
 			// Build the DELETE node.
 			EraseNode* erase = FB_NEW_POOL(pool) EraseNode(pool);
+			erase->marks |= StmtNode::MARK_MERGE;
 			thisIf->trueAction = erase;
 
 			dsql_ctx* context = dsqlGetContext(target);
@@ -5609,24 +5699,30 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 			--dsqlScratch->scopeLevel;
 		}
 
+		if (!thisIf->condition && nextMatched != whenMatched.end())
+		{
+			ComparativeBoolNode* cmpNode = FB_NEW_POOL(pool) ComparativeBoolNode(pool,
+				blr_eql, MAKE_constant("1", CONSTANT_BOOLEAN), MAKE_constant("1", CONSTANT_BOOLEAN));
+			cmpNode->dsqlCheckBoolean = true;
+
+			NestConst<BoolExprNode> trueCondition(cmpNode);
+			thisIf->condition = doDsqlPass(dsqlScratch, trueCondition, false);
+		}
+
 		if (lastIf)
 			lastIf->falseAction = thisIf->condition ? thisIf : thisIf->trueAction;
 		else
 			update = thisIf->condition ? thisIf : thisIf->trueAction;
 
 		lastIf = thisIf;
-
-		// If a statement executes unconditionally, no other will ever execute.
-		if (!thisIf->condition)
-			break;
 	}
 
 	StmtNode* insert = NULL;
 	lastIf = NULL;
 
-	for (ObjectsArray<NotMatched>::iterator notMatched = whenNotMatched.begin();
+	for (auto nextNotMatched = whenNotMatched.begin(), notMatched = nextNotMatched++;
 		 notMatched != whenNotMatched.end();
-		 ++notMatched)
+		 notMatched = nextNotMatched++)
 	{
 		IfNode* thisIf = FB_NEW_POOL(pool) IfNode(pool);
 
@@ -5640,6 +5736,7 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 
 		// Build the INSERT node.
 		StoreNode* store = FB_NEW_POOL(pool) StoreNode(pool);
+		// TODO: store->marks |= StmtNode::MARK_MERGE;
 		store->dsqlRelation = relation;
 		store->dsqlFields = notMatched->fields;
 		store->dsqlValues = notMatched->values;
@@ -5679,16 +5776,22 @@ StmtNode* MergeNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 		dsqlScratch->context->pop();
 		--dsqlScratch->scopeLevel;
 
+		if (!thisIf->condition && nextNotMatched != whenNotMatched.end())
+		{
+			ComparativeBoolNode* cmpNode = FB_NEW_POOL(pool) ComparativeBoolNode(pool,
+				blr_eql, MAKE_constant("1", CONSTANT_BOOLEAN), MAKE_constant("1", CONSTANT_BOOLEAN));
+			cmpNode->dsqlCheckBoolean = true;
+
+			NestConst<BoolExprNode> trueCondition(cmpNode);
+			thisIf->condition = doDsqlPass(dsqlScratch, trueCondition, false);
+		}
+
 		if (lastIf)
 			lastIf->falseAction = thisIf->condition ? thisIf : thisIf->trueAction;
 		else
 			insert = thisIf->condition ? thisIf : thisIf->trueAction;
 
 		lastIf = thisIf;
-
-		// If a statement executes unconditionally, no other will ever execute.
-		if (!thisIf->condition)
-			break;
 	}
 
 	// Build a IF (target.RDB$DB_KEY IS NULL).
@@ -5933,6 +6036,9 @@ DmlNode* ModifyNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* c
 	node->orgStream = orgStream;
 	node->newStream = newStream;
 
+	if (csb->csb_blr_reader.peekByte() == blr_marks)
+		node->marks |= PAR_marks(csb);
+
 	AutoSetRestore<StmtNode*> autoCurrentDMLNode(&csb->csb_currentDMLNode, node);
 
 	node->statement = PAR_parse_stmt(tdbb, csb);
@@ -5974,6 +6080,7 @@ StmtNode* ModifyNode::internalDsqlPass(DsqlCompilerScratch* dsqlScratch, bool up
 	if (dsqlCursorName.hasData() && dsqlScratch->isPsql())
 	{
 		node->dsqlContext = dsqlPassCursorContext(dsqlScratch, dsqlCursorName, relation);
+		node->marks |= StmtNode::MARK_POSITIONED;
 
 		// Process old context values.
 		dsqlScratch->context->push(node->dsqlContext);
@@ -6054,6 +6161,7 @@ StmtNode* ModifyNode::internalDsqlPass(DsqlCompilerScratch* dsqlScratch, bool up
 	{
 		rse = dsqlPassCursorReference(dsqlScratch, dsqlCursorName, relation);
 		old_context = rse->dsqlStreams->items[0]->dsqlContext;
+		node->marks |= StmtNode::MARK_POSITIONED;
 	}
 	else
 	{
@@ -6154,6 +6262,7 @@ string ModifyNode::internalPrint(NodePrinter& printer) const
 	NODE_PRINT(printer, mapView);
 	NODE_PRINT(printer, orgStream);
 	NODE_PRINT(printer, newStream);
+	NODE_PRINT(printer, marks);
 
 	return "ModifyNode";
 }
@@ -6179,6 +6288,10 @@ void ModifyNode::genBlr(DsqlCompilerScratch* dsqlScratch)
 	GEN_stuff_context(dsqlScratch, context);
 	context = dsqlRelation->dsqlContext;
 	GEN_stuff_context(dsqlScratch, context);
+
+	if (marks)
+		dsqlScratch->putBlrMarkers(marks);
+
 	statement->genBlr(dsqlScratch);
 
 	if (statement2)
@@ -6358,6 +6471,9 @@ ModifyNode* ModifyNode::pass2(thread_db* tdbb, CompilerScratch* csb)
 			SBM_SET(tdbb->getDefaultPool(), &csb->csb_rpt[orgStream].csb_fields, id);
 	}
 
+	if (!(marks & StmtNode::MARK_POSITIONED))
+		forNode = pass2FindForNode(parentStmt, orgStream);
+
 	impureOffset = CMP_impure(csb, sizeof(impure_state));
 
 	return this;
@@ -6427,7 +6543,12 @@ const StmtNode* ModifyNode::modify(thread_db* tdbb, jrd_req* request, WhichTrigg
 	{
 		case jrd_req::req_evaluate:
 			request->req_records_affected.bumpModified(false);
-			break;
+
+			if (impure->sta_state == 0 && forNode && forNode->isWriteLockMode(request))
+				request->req_operation = jrd_req::req_return;
+				// fall thru
+			else
+				break;
 
 		case jrd_req::req_return:
 			if (impure->sta_state == 1)
@@ -6442,6 +6563,12 @@ const StmtNode* ModifyNode::modify(thread_db* tdbb, jrd_req* request, WhichTrigg
 
 			if (impure->sta_state == 0)
 			{
+				if (forNode && forNode->isWriteLockMode(request))
+				{
+					forceWriteLock(tdbb, orgRpb, transaction);
+					return parentStmt;
+				}
+
 				// CVC: This call made here to clear the record in each NULL field and
 				// varchar field whose tail may contain garbage.
 				cleanupRpb(tdbb, newRpb);
@@ -6460,7 +6587,20 @@ const StmtNode* ModifyNode::modify(thread_db* tdbb, jrd_req* request, WhichTrigg
 					VirtualTable::modify(tdbb, orgRpb, newRpb);
 				else if (!relation->rel_view_rse)
 				{
-					VIO_modify(tdbb, orgRpb, newRpb, transaction);
+					// VIO_modify returns false if there is an update conflict in Read Consistency
+					// transaction. Before returning false it disables statement-level snapshot
+					// (via setting req_update_conflict flag) so re-fetch should see new data.
+
+					if (!VIO_modify(tdbb, orgRpb, newRpb, transaction))
+					{
+						forceWriteLock(tdbb, orgRpb, transaction);
+
+						if (!forNode)
+							restartRequest(request, transaction);
+
+						forNode->setWriteLockMode(request);
+						return parentStmt;
+					}
 					IDX_modify(tdbb, orgRpb, newRpb, transaction);
 					REPL_modify(tdbb, orgRpb, newRpb, transaction);
 				}
@@ -7956,6 +8096,12 @@ SuspendNode* SuspendNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 				  Arg::Gds(isc_random) << Arg::Str("SUSPEND"));
 	}
 
+	if (dsqlScratch->outputVariables.isEmpty())
+	{
+		ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
+				  Arg::Gds(isc_suspend_without_returns));
+	}
+
 	if (dsqlScratch->flags & DsqlCompilerScratch::FLAG_IN_AUTO_TRANS_BLOCK)	// autonomous transaction
 	{
 		ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-901) <<
@@ -8804,6 +8950,7 @@ static const dsql_msg* dsqlGenDmlHeader(DsqlCompilerScratch* dsqlScratch, RseNod
 	if (dsqlRse)
 	{
 		dsqlScratch->appendUChar(blr_for);
+		dsqlScratch->putBlrMarkers(StmtNode::MARK_FOR_UPDATE);
 		GEN_expr(dsqlScratch, dsqlRse);
 	}
 
@@ -9485,6 +9632,20 @@ static void cleanupRpb(thread_db* tdbb, record_param* rpb)
 	}
 }
 
+// Try to set write lock on record until success or record exists
+static void forceWriteLock(thread_db * tdbb, record_param * rpb, jrd_tra * transaction)
+{
+	while (VIO_refetch_record(tdbb, rpb, transaction, true, true))
+	{
+		rpb->rpb_runtime_flags &= ~RPB_refetch;
+
+		// VIO_writelock returns false if record has been deleted or modified
+		// by someone else.
+		if (VIO_writelock(tdbb, rpb, transaction))
+			break;
+	}
+}
+
 // Build a validation list for a relation, if appropriate.
 static void makeValidation(thread_db* tdbb, CompilerScratch* csb, StreamType stream,
 	Array<ValidateInfo>& validations)
@@ -9688,6 +9849,23 @@ static void pass1Validations(thread_db* tdbb, CompilerScratch* csb, Array<Valida
 	}
 }
 
+ForNode* pass2FindForNode(StmtNode* node, StreamType stream)
+{
+	// lookup for parent ForNode
+	while (node && !nodeIs<ForNode>(node))
+		node = node->parentStmt;
+
+	ForNode* forNode = nodeAs<ForNode>(node);
+	if (forNode && forNode->rse->containsStream(stream))
+	{
+		//fb_assert(forNode->forUpdate == true);
+		if (forNode->forUpdate)
+			return forNode;
+	}
+
+	return nullptr;
+};
+
 // Inherit access to triggers to be fired.
 //
 // When we detect that a trigger could be fired by a request,
@@ -9844,6 +10022,19 @@ static void preprocessAssignments(thread_db* tdbb, CompilerScratch* csb,
 		if (identityType == IDENT_TYPE_ALWAYS)
 			ERR_post(Arg::Gds(isc_overriding_system_missing) << relation->rel_name);
 	}
+}
+
+static void restartRequest(const jrd_req* request, jrd_tra* transaction)
+{
+	const jrd_req* top_request = request->req_snapshot.m_owner;
+	fb_assert(top_request);
+	fb_assert(top_request->req_flags & req_update_conflict);
+
+	transaction->tra_flags |= TRA_ex_restart;
+
+	ERR_post(Arg::Gds(isc_deadlock) <<
+		Arg::Gds(isc_update_conflict) <<
+		Arg::Gds(isc_concurrent_transaction) << Arg::Int64(top_request->req_conflict_txn));
 }
 
 // Execute a list of validation expressions.

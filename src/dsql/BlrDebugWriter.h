@@ -56,6 +56,9 @@ public:
 	virtual void raiseError(const Firebird::Arg::StatusVector& vector);
 
 private:
+	void putValue(ULONG val);
+	void putBlrOffset();
+
 	DebugData debugData;
 };
 

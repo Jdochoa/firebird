@@ -443,6 +443,9 @@ dsql_ctx* PASS1_make_context(DsqlCompilerScratch* dsqlScratch, RecordSourceNode*
 
 		if (selNode->dsqlFlags & RecordSourceNode::DFLAG_CURSOR)
 			context->ctx_flags |= CTX_cursor;
+
+		if (selNode->dsqlFlags & RecordSourceNode::DFLAG_LATERAL)
+			context->ctx_flags |= CTX_lateral;
 	}
 	else
 		context->ctx_context = dsqlScratch->contextNumber++;
@@ -991,14 +994,16 @@ RseNode* PASS1_derived_table(DsqlCompilerScratch* dsqlScratch, SelectExprNode* i
 	DsqlContextStack* const req_base = dsqlScratch->context;
 	const string aliasRelationPrefix = dsqlScratch->aliasRelationPrefix;
 
-	// Change context, because when we are processing the derived table rse
-	// it may not reference to other streams in the same scope_level.
+	// Change context, because the derived table cannot reference other streams
+	// at the same scope_level (unless this is a lateral derived table).
 	DsqlContextStack temp;
 	// Put special contexts (NEW/OLD) also on the stack
 	for (DsqlContextStack::iterator stack(*dsqlScratch->context); stack.hasData(); ++stack)
 	{
 		dsql_ctx* local_context = stack.object();
-		if ((local_context->ctx_scope_level < dsqlScratch->scopeLevel) ||
+
+		if ((context->ctx_flags & CTX_lateral) ||
+			(local_context->ctx_scope_level < dsqlScratch->scopeLevel) ||
 			(local_context->ctx_flags & CTX_system))
 		{
 			temp.push(local_context);

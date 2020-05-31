@@ -605,22 +605,26 @@ using namespace Firebird;
 %token <metaNamePtr> CUME_DIST
 %token <metaNamePtr> DECFLOAT
 %token <metaNamePtr> DEFINER
+%token <metaNamePtr> DISABLE
+%token <metaNamePtr> ENABLE
 %token <metaNamePtr> EXCESS
 %token <metaNamePtr> EXCLUDE
+%token <metaNamePtr> EXTENDED
 %token <metaNamePtr> FIRST_DAY
 %token <metaNamePtr> FOLLOWING
 %token <metaNamePtr> HEX_DECODE
 %token <metaNamePtr> HEX_ENCODE
 %token <metaNamePtr> IDLE
 %token <metaNamePtr> INVOKER
-%token <metaNamePtr> INT128
 %token <metaNamePtr> IV
 %token <metaNamePtr> LAST_DAY
+%token <metaNamePtr> LATERAL
 %token <metaNamePtr> LEGACY
 %token <metaNamePtr> LOCAL
 %token <metaNamePtr> LOCALTIME
 %token <metaNamePtr> LOCALTIMESTAMP
 %token <metaNamePtr> LPARAM
+%token <metaNamePtr> MAKE_DBKEY
 %token <metaNamePtr> MESSAGE
 %token <metaNamePtr> MODE
 %token <metaNamePtr> NATIVE
@@ -632,6 +636,7 @@ using namespace Firebird;
 %token <metaNamePtr> PERCENT_RANK
 %token <metaNamePtr> PRECEDING
 %token <metaNamePtr> PRIVILEGE
+%token <metaNamePtr> PUBLICATION
 %token <metaNamePtr> QUANTIZE
 %token <metaNamePtr> RANGE
 %token <metaNamePtr> RDB_ERROR
@@ -2083,7 +2088,7 @@ db_initial_desc($alterDatabaseNode)
 // With the exception of LENGTH, all clauses here are handled only at the client.
 %type db_initial_option(<alterDatabaseNode>)
 db_initial_option($alterDatabaseNode)
-	: PAGE_SIZE equals pos_short_integer
+	: PAGE_SIZE equals NUMBER32BIT
 	| USER symbol_user_name
 	| USER utf_string
 	| ROLE valid_symbol_name
@@ -2173,11 +2178,42 @@ table_clause
 			{
 				$<createRelationNode>$ = newNode<CreateRelationNode>($1, $2);
 			}
-		'(' table_elements($3) ')' sql_security_clause
+		'(' table_elements($3) ')' table_attributes($3)
 			{
 				$$ = $3;
-				$$->ssDefiner = $7;
 			}
+	;
+
+%type table_attributes(<relationNode>)
+table_attributes($relationNode)
+	: /* nothing */
+	| table_attribute($relationNode) table_attributes($relationNode)
+	;
+
+%type table_attribute(<relationNode>)
+table_attribute($relationNode)
+	: sql_security_clause
+		{ setClause($relationNode->ssDefiner, "SQL SECURITY", $1); }
+	| publication_state
+		{ setClause($relationNode->replicationState, "PUBLICATION", $1); }
+	;
+
+%type <boolVal> sql_security_clause
+sql_security_clause
+	: SQL SECURITY DEFINER		{ $$ = true; }
+	| SQL SECURITY INVOKER		{ $$ = false; }
+	;
+
+%type <nullableBoolVal> sql_security_clause_opt
+sql_security_clause_opt
+	: /* nothing */				{ $$ = Nullable<bool>::empty(); }
+	| sql_security_clause		{ $$ = Nullable<bool>::val($1); }
+	;
+
+%type <boolVal> publication_state
+publication_state
+	: ENABLE PUBLICATION		{ $$ = true; }
+	| DISABLE PUBLICATION		{ $$ = false; }
 	;
 
 %type <createRelationNode> gtt_table_clause
@@ -2204,8 +2240,8 @@ gtt_ops($createRelationNode)
 %type gtt_op(<createRelationNode>)
 gtt_op($createRelationNode)
 	: // nothing by default. Will be set "on commit delete rows" in dsqlPass
-	| sql_security_clause
-		{ setClause(static_cast<BaseNullable<bool>&>($createRelationNode->ssDefiner), "SQL SECURITY", $1); }
+	| sql_security_clause_opt
+		{ setClause($createRelationNode->ssDefiner, "SQL SECURITY", $1); }
 	| ON COMMIT DELETE ROWS
 		{ setClause($createRelationNode->relationType, "ON COMMIT DELETE ROWS", rel_global_temp_delete); }
 	| ON COMMIT PRESERVE ROWS
@@ -2610,7 +2646,7 @@ procedure_clause
 
 %type <createAlterProcedureNode> psql_procedure_clause
 psql_procedure_clause
-	: procedure_clause_start sql_security_clause AS local_declarations_opt full_proc_block
+	: procedure_clause_start sql_security_clause_opt AS local_declarations_opt full_proc_block
 		{
 			$$ = $1;
 			$$->ssDefiner = $2;
@@ -2637,13 +2673,6 @@ procedure_clause_start
 			{ $$ = newNode<CreateAlterProcedureNode>(*$1); }
 		input_parameters(NOTRIAL(&$2->parameters)) output_parameters(NOTRIAL(&$2->returns))
 			{ $$ = $2; }
-	;
-
-%type <nullableBoolVal> sql_security_clause
-sql_security_clause
-	: /* nothing */				{ $$ = Nullable<bool>::empty(); }
-	| SQL SECURITY DEFINER		{ $$ = Nullable<bool>::val(true); }
-	| SQL SECURITY INVOKER		{ $$ = Nullable<bool>::val(false); }
 	;
 
 %type <createAlterProcedureNode> alter_procedure_clause
@@ -2741,7 +2770,7 @@ function_clause
 
 %type <createAlterFunctionNode> psql_function_clause
 psql_function_clause
-	: function_clause_start sql_security_clause AS local_declarations_opt full_proc_block
+	: function_clause_start sql_security_clause_opt AS local_declarations_opt full_proc_block
 		{
 			$$ = $1;
 			$$->ssDefiner = $2;
@@ -2827,7 +2856,7 @@ replace_function_clause
 
 %type <createAlterPackageNode> package_clause
 package_clause
-	: symbol_package_name sql_security_clause AS BEGIN package_items_opt END
+	: symbol_package_name sql_security_clause_opt AS BEGIN package_items_opt END
 		{
 			CreateAlterPackageNode* node = newNode<CreateAlterPackageNode>(*$1);
 			node->ssDefiner = $2;
@@ -3775,14 +3804,14 @@ create_trigger_common($trigger)
 		{
 			$trigger->active = $1;
 			$trigger->type = $2;
-			$trigger->position = $3;
+			setClause($trigger->position, "POSITION", $3);
 		}
 	| FOR symbol_table_name trigger_active table_trigger_type trigger_position
 		{
 			$trigger->relationName = *$2;
 			$trigger->active = $3;
 			$trigger->type = $4;
-			$trigger->position = $5;
+			setClause($trigger->position, "POSITION", $5);
 		}
 	;
 
@@ -3807,10 +3836,11 @@ trigger_active
 
 %type <uint64Val> trigger_type(<createAlterTriggerNode>)
 trigger_type($trigger)
-	: table_trigger_type ON symbol_table_name
+	: table_trigger_type trigger_position ON symbol_table_name
 		{
 			$$ = $1;
-			$trigger->relationName = *$3;
+			setClause($trigger->position, "POSITION", $2);
+			$trigger->relationName = *$4;
 		}
 	| ON trigger_db_type
 		{ $$ = $2; }
@@ -4114,22 +4144,37 @@ alter_op($relationNode)
 		}
 	| ALTER SQL SECURITY DEFINER
 		{
-			RelationNode::AlterSqlSecurityClause* clause =
-				newNode<RelationNode::AlterSqlSecurityClause>();
-			clause->ssDefiner = Nullable<bool>::val(true);
+			setClause($relationNode->ssDefiner, "SQL SECURITY", true);
+			RelationNode::Clause* clause =
+				newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_SQL_SECURITY);
 			$relationNode->clauses.add(clause);
 		}
 	| ALTER SQL SECURITY INVOKER
 		{
-			RelationNode::AlterSqlSecurityClause* clause =
-				newNode<RelationNode::AlterSqlSecurityClause>();
-			clause->ssDefiner = Nullable<bool>::val(false);
+			setClause($relationNode->ssDefiner, "SQL SECURITY", false);
+			RelationNode::Clause* clause =
+				newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_SQL_SECURITY);
 			$relationNode->clauses.add(clause);
 		}
 	| DROP SQL SECURITY
 		{
-			RelationNode::AlterSqlSecurityClause* clause =
-				newNode<RelationNode::AlterSqlSecurityClause>();
+			setClause($relationNode->ssDefiner, "SQL SECURITY", Nullable<bool>::empty());
+			RelationNode::Clause* clause =
+				newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_SQL_SECURITY);
+			$relationNode->clauses.add(clause);
+		}
+	| ENABLE PUBLICATION
+		{
+			setClause($relationNode->replicationState, "PUBLICATION", true);
+			RelationNode::Clause* clause =
+				newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_PUBLICATION);
+			$relationNode->clauses.add(clause);
+		}
+	| DISABLE PUBLICATION
+		{
+			setClause($relationNode->replicationState, "PUBLICATION", false);
+			RelationNode::Clause* clause =
+				newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_PUBLICATION);
 			$relationNode->clauses.add(clause);
 		}
 	;
@@ -4223,14 +4268,17 @@ keyword_or_column
 	| UPDATING
 	| VAR_SAMP
 	| VAR_POP
-	| DECFLOAT				// added in FB 4.0
-	| INT128
+	| BINARY				// added in FB 4.0
+	| DECFLOAT
+	| LATERAL
 	| LOCAL
 	| LOCALTIME
 	| LOCALTIMESTAMP
+	| PUBLICATION
 	| TIMEZONE_HOUR
 	| TIMEZONE_MINUTE
 	| UNBOUNDED
+	| VARBINARY
 	| WINDOW
 	| WITHOUT
 	;
@@ -4387,12 +4435,38 @@ db_alter_clause($alterDatabaseNode)
 		{ $alterDatabaseNode->linger = 0; }
 	| SET DEFAULT sql_security_clause
 		{ $alterDatabaseNode->ssDefiner = $3; }
+	| ENABLE PUBLICATION
+		{ $alterDatabaseNode->clauses |= AlterDatabaseNode::CLAUSE_ENABLE_PUB; }
+	| DISABLE PUBLICATION
+		{ $alterDatabaseNode->clauses |= AlterDatabaseNode::CLAUSE_DISABLE_PUB; }
+	| ADD pub_table_filter($alterDatabaseNode) TO PUBLICATION
+		{ $alterDatabaseNode->clauses |= AlterDatabaseNode::CLAUSE_PUB_ADD_TABLE; }
+	| DROP pub_table_filter($alterDatabaseNode) FROM PUBLICATION
+		{ $alterDatabaseNode->clauses |= AlterDatabaseNode::CLAUSE_PUB_DROP_TABLE; }
 	;
 
 %type crypt_key_clause(<alterDatabaseNode>)
 crypt_key_clause($alterDatabaseNode)
 	: // nothing
 	| KEY valid_symbol_name		{ $alterDatabaseNode->keyName = *$2; }
+	;
+
+%type pub_table_filter(<alterDatabaseNode>)
+pub_table_filter($alterDatabaseNode)
+	: ALL
+	| TABLE pub_table_list($alterDatabaseNode)
+	;
+
+%type pub_table_list(<alterDatabaseNode>)
+pub_table_list($alterDatabaseNode)
+	: pub_table_clause($alterDatabaseNode)
+	| pub_table_list ',' pub_table_clause($alterDatabaseNode)
+	;
+
+%type pub_table_clause(<alterDatabaseNode>)
+pub_table_clause($alterDatabaseNode)
+	: symbol_table_name
+		{ $alterDatabaseNode->pubTables.add(*$1); }
 	;
 
 // ALTER TRIGGER
@@ -4685,56 +4759,39 @@ non_charset_simple_type
 				$$->dtype = dtype_sql_date;
 				$$->length = sizeof(ULONG);
 			}
+			$$->flags |= FLD_has_len;
 		}
 	| TIME without_time_zone_opt
 		{
 			$$ = newNode<dsql_fld>();
 
-			if (client_dialect < SQL_DIALECT_V6_TRANSITION)
-			{
-				ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
-						  Arg::Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<
-																		  Arg::Str("TIME"));
-			}
-			if (db_dialect < SQL_DIALECT_V6_TRANSITION)
-			{
-				ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
-						  Arg::Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<
-																		  Arg::Str("TIME"));
-			}
+			checkTimeDialect();
 			$$->dtype = dtype_sql_time;
 			$$->length = sizeof(SLONG);
+			$$->flags |= FLD_has_len;
 		}
 	| TIME WITH TIME ZONE
 		{
 			$$ = newNode<dsql_fld>();
 
-			if (client_dialect < SQL_DIALECT_V6_TRANSITION)
-			{
-				ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
-						  Arg::Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<
-																		  Arg::Str("TIME"));
-			}
-			if (db_dialect < SQL_DIALECT_V6_TRANSITION)
-			{
-				ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
-						  Arg::Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<
-																		  Arg::Str("TIME"));
-			}
+			checkTimeDialect();
 			$$->dtype = dtype_sql_time_tz;
 			$$->length = sizeof(ISC_TIME_TZ);
+			$$->flags |= FLD_has_len;
 		}
 	| TIMESTAMP without_time_zone_opt
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_timestamp;
 			$$->length = sizeof(GDS_TIMESTAMP);
+			$$->flags |= FLD_has_len;
 		}
 	| TIMESTAMP WITH TIME ZONE
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_timestamp_tz;
 			$$->length = sizeof(ISC_TIMESTAMP_TZ);
+			$$->flags |= FLD_has_len;
 		}
 	| BOOLEAN
 		{
@@ -5302,14 +5359,17 @@ set_bind
 %type <legacyField> set_bind_from
 set_bind_from
 	: bind_type
+	| TIME ZONE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_timestamp_tz;
+			$$->length = 0;
+		}
 	;
 
 %type <legacyField> bind_type
 bind_type
 	: non_array_type
-		{
-			$$ = $1;
-		}
 	| varying_keyword
 		{
 			$$ = newNode<dsql_fld>();
@@ -5334,7 +5394,28 @@ set_bind_to
 			$$ = newNode<dsql_fld>();
 			$$->flags = FLD_native;
 		}
+	| EXTENDED
+		{
+			$$ = newNode<dsql_fld>();
+			$$->flags = FLD_extended;
+		}
+	| EXTENDED TIME WITH TIME ZONE
+		{
+			$$ = newNode<dsql_fld>();
+			checkTimeDialect();
+			$$->dtype = dtype_ex_time_tz;
+			$$->length = sizeof(ISC_TIME_TZ_EX);
+			$$->flags |= FLD_has_len;
+		}
+	| EXTENDED TIMESTAMP WITH TIME ZONE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_ex_timestamp_tz;
+			$$->length = sizeof(ISC_TIMESTAMP_TZ_EX);
+			$$->flags |= FLD_has_len;
+		}
 	;
+
 
 %type decfloat_traps_list_opt(<setDecFloatTrapsNode>)
 decfloat_traps_list_opt($setDecFloatTrapsNode)
@@ -5884,6 +5965,7 @@ table_reference
 table_primary
 	: table_proc
 	| derived_table			{ $$ = $1; }
+	| lateral_derived_table	{ $$ = $1; }
 	| '(' joined_table ')'	{ $$ = $2; }
 	;
 
@@ -5896,6 +5978,15 @@ derived_table
 			if ($5)
 				$$->alias = $5->c_str();
 			$$->columns = $6;
+		}
+	;
+
+%type <selectExprNode> lateral_derived_table
+lateral_derived_table
+	: LATERAL derived_table
+		{
+			$$ = $2;
+			$$->dsqlFlags |= RecordSourceNode::DFLAG_LATERAL;
 		}
 	;
 
@@ -6979,7 +7070,6 @@ create_user_clause
 			$$ = newNode<CreateAlterUserNode>(CreateAlterUserNode::USER_ADD, *$1);
 		}
 	user_fixed_list_opt($2)
-	user_var_opts($2)
 		{
 			$$ = $2;
 		}
@@ -6992,7 +7082,6 @@ alter_user_clause
 			$$ = newNode<CreateAlterUserNode>(CreateAlterUserNode::USER_MOD, *$1);
 		}
 	user_fixed_list_opt($3)
-	user_var_opts($3)
 		{
 			$$ = $3;
 		}
@@ -7005,7 +7094,6 @@ alter_cur_user_clause
 			$$ = newNode<CreateAlterUserNode>(CreateAlterUserNode::USER_MOD, "");
 		}
 	user_fixed_list_opt($2)
-	user_var_opts($2)
 		{
 			$$ = $2;
 		}
@@ -7018,7 +7106,6 @@ replace_user_clause
 			$$ = newNode<CreateAlterUserNode>(CreateAlterUserNode::USER_RPL, *$1);
 		}
 	user_fixed_list_opt($3)
-	user_var_opts($3)
 		{
 			$$ = $3;
 		}
@@ -7053,11 +7140,6 @@ user_fixed_option($node)
 	| INACTIVE				{ setClause($node->active, "ACTIVE/INACTIVE", false); }
 	| USING PLUGIN valid_symbol_name
 							{ setClause($node->plugin, "USING PLUGIN", $3); }
-	;
-
-%type user_var_opts(<createAlterUserNode>)
-user_var_opts($node)
-	: // nothing
 	| TAGS '(' user_var_list($node) ')'
 	;
 
@@ -7427,6 +7509,7 @@ constant
 	| '-' ul_numeric_constant	{ $$ = newNode<NegateNode>($2); }
 	| '-' LIMIT64_INT			{ $$ = MAKE_const_sint64(MIN_SINT64, 0); }
 	| '-' LIMIT64_NUMBER		{ $$ = MAKE_const_sint64(MIN_SINT64, $2->getScale()); }
+	| '-' u_constant_128		{ $$ = newNode<NegateNode>($2); }
 	| boolean_literal
 	;
 
@@ -7438,7 +7521,12 @@ u_numeric_constant
 		{ $$ = MAKE_constant($1->c_str(), CONSTANT_NUM128, $1->getScale()); }
 	| LIMIT64_INT
 		{ $$ = MAKE_constant($1->c_str(), CONSTANT_NUM128); }
-	| NUM128
+	| u_constant_128
+	;
+
+%type <valueExprNode> u_constant_128
+u_constant_128
+	: NUM128
 		{ $$ = MAKE_constant($1->c_str(), CONSTANT_NUM128, $1->getScale()); }
 	;
 
@@ -7981,6 +8069,7 @@ system_function_std_syntax
 	| LOG
 	| LOG10
 	| LPAD
+	| MAKE_DBKEY
 	| MAXVALUE
 	| MINVALUE
 	| MOD
@@ -8638,8 +8727,8 @@ non_reserved_word
 	| FREE_IT
 	| RESTRICT
 	| ROLE
-	| TYPE				// added in IB 6.0
-	| BREAK				// added in FB 1.0
+	| TYPE					// added in IB 6.0
+	| BREAK					// added in FB 1.0
 	| DESCRIPTOR
 	| SUBSTRING
 	| COALESCE				// added in FB 1.5
@@ -8856,8 +8945,11 @@ non_reserved_word
 	| CTR_LITTLE_ENDIAN
 	| CUME_DIST
 	| DEFINER
+	| DISABLE
+	| ENABLE
 	| EXCESS
 	| EXCLUDE
+	| EXTENDED
 	| FIRST_DAY
 	| FOLLOWING
 	| HEX_DECODE
@@ -8869,6 +8961,7 @@ non_reserved_word
 	| LEGACY
 	| LIFETIME
 	| LPARAM
+	| MAKE_DBKEY
 	| MESSAGE
 	| MODE
 	| NATIVE

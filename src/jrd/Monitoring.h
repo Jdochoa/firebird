@@ -327,7 +327,7 @@ public:
 
 	typedef Firebird::HalfStaticArray<AttNumber, 64> SessionList;
 
-	explicit MonitoringData(const Database*);
+	explicit MonitoringData(Database*);
 	~MonitoringData();
 
 	bool initialize(Firebird::SharedMemoryBase*, bool);
@@ -352,7 +352,7 @@ private:
 
 	void ensureSpace(ULONG);
 
-	const Firebird::string m_dbId;
+	const Firebird::string& m_dbId;
 	Firebird::AutoPtr<Firebird::SharedMemory<MonitoringHeader> > m_sharedMemory;
 	Firebird::Mutex m_localMutex;
 };

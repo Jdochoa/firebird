@@ -45,6 +45,7 @@
 #include "../common/os/guid.h"
 #include "../common/os/isc_i_proto.h"
 #include "../jrd/CryptoManager.h"
+#include "../jrd/replication/Publisher.h"
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -350,6 +351,8 @@ void BackupManager::beginBackup(thread_db* tdbb)
 		const ULONG adjusted_scn = ++header->hdr_header.pag_scn; // Generate new SCN
 		PAG_replace_entry_first(tdbb, header, Ods::HDR_backup_guid, sizeof(guid),
 			reinterpret_cast<const UCHAR*>(&guid));
+
+		REPL_log_switch(tdbb);
 
 		stateGuard.releaseHeader();
 		stateGuard.setSuccess();

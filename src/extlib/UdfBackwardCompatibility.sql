@@ -38,6 +38,9 @@ create function isLeapYear (
 -- Run minimum test
 select 25, 3, div(25, 3) from rdb$database;
 select pi(), frac(pi()) from rdb$database;
-select current_date, dow(current_date), sdow(current_date) from rdb$database;
-select current_timestamp, getExactTimestampUTC() from rdb$database;
-select current_date, isLeapYear(current_date) from rdb$database;
+select timestamp '2020-01-29', dow(timestamp '2020-01-29'), sdow(timestamp '2020-01-29') from rdb$database;
+set time zone 'utc';
+select cast(((current_timestamp - getexacttimestamputc()) * 1000) as integer) as getexacttimestamptest from rdb$database;
+set time zone local;
+select timestamp '2019-01-29', isleapyear(timestamp '2019-01-29') from rdb$database;
+select timestamp '2020-01-29', isleapyear(timestamp '2020-01-29') from rdb$database;

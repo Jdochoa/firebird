@@ -19,6 +19,7 @@
  */
 
 #include "firebird.h"
+#include <cmath>
 #include <math.h>
 #include <ctype.h>
 #include "../common/TimeZoneUtil.h"
@@ -171,7 +172,6 @@ static const long LONG_POS_MAX = 2147483647;
 static const SINT64 MAX_INT64_LIMIT = MAX_SINT64 / 10;
 static const SINT64 MIN_INT64_LIMIT = MIN_SINT64 / 10;
 static const SINT64 SECONDS_PER_DAY = TimeStamp::SECONDS_PER_DAY;
-static const SINT64 ISC_TICKS_PER_DAY = TimeStamp::ISC_TICKS_PER_DAY;
 static const SCHAR DIALECT_3_TIMESTAMP_SCALE = -9;
 static const SCHAR DIALECT_1_TIMESTAMP_SCALE = 0;
 
@@ -639,6 +639,11 @@ void ArithmeticNode::makeDialect1(dsc* desc, dsc& desc1, dsc& desc2)
 
 			switch (dtype)
 			{
+				case dtype_ex_time_tz:
+				case dtype_ex_timestamp_tz:
+					fb_assert(false);
+					ERRD_post(Arg::Gds(isc_expression_eval_err));
+
 				case dtype_sql_time:
 				case dtype_sql_time_tz:
 				case dtype_sql_date:
@@ -896,12 +901,19 @@ void ArithmeticNode::makeDialect3(dsc* desc, dsc& desc1, dsc& desc2)
 				else
 					dtype = dtype_int64;
 			}
-			else if (desc1.isDecOrInt() && desc2.isDecOrInt())
-				dtype = dtype_dec128;
 			else if (DTYPE_IS_NUMERIC(dtype1) && DTYPE_IS_NUMERIC(dtype2))
 			{
-				fb_assert(DTYPE_IS_APPROX(dtype1) || DTYPE_IS_APPROX(dtype2));
-				dtype = dtype_double;
+				if (DTYPE_IS_DECFLOAT(dtype1) || DTYPE_IS_DECFLOAT(dtype2))
+				{
+					USHORT d1 = DTYPE_IS_DECFLOAT(dtype1) ? dtype1 : 0;
+					USHORT d2 = DTYPE_IS_DECFLOAT(dtype2) ? dtype2 : 0;
+					dtype = MAX(d1, d2);
+				}
+				else
+				{
+					fb_assert(DTYPE_IS_APPROX(dtype1) || DTYPE_IS_APPROX(dtype2));
+					dtype = dtype_double;
+				}
 			}
 			else
 			{
@@ -921,6 +933,11 @@ void ArithmeticNode::makeDialect3(dsc* desc, dsc& desc1, dsc& desc2)
 
 			switch (dtype)
 			{
+				case dtype_ex_time_tz:
+				case dtype_ex_timestamp_tz:
+					fb_assert(false);
+					ERRD_post(Arg::Gds(isc_expression_eval_err));
+
 				case dtype_sql_time:
 				case dtype_sql_time_tz:
 				case dtype_sql_date:
@@ -1222,6 +1239,11 @@ void ArithmeticNode::getDescDialect1(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 					desc->dsc_flags = 0;
 					return;
 
+				case dtype_ex_time_tz:
+				case dtype_ex_timestamp_tz:
+					fb_assert(false);
+					ERRD_post(Arg::Gds(isc_expression_eval_err));
+
 				case dtype_sql_date:
 				case dtype_sql_time:
 				case dtype_sql_time_tz:
@@ -1478,10 +1500,20 @@ void ArithmeticNode::getDescDialect3(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 				else
 					dtype = dtype_int64;
 			}
-			else if (desc1.isDecOrInt() && desc2.isDecOrInt())
-				dtype = dtype_dec128;
-			else if (DTYPE_IS_NUMERIC(desc1.dsc_dtype) && DTYPE_IS_NUMERIC(desc2.dsc_dtype))
-				dtype = dtype_double;
+			else if (DTYPE_IS_NUMERIC(dtype1) && DTYPE_IS_NUMERIC(dtype2))
+			{
+				if (DTYPE_IS_DECFLOAT(dtype1) || DTYPE_IS_DECFLOAT(dtype2))
+				{
+					USHORT d1 = DTYPE_IS_DECFLOAT(dtype1) ? dtype1 : 0;
+					USHORT d2 = DTYPE_IS_DECFLOAT(dtype2) ? dtype2 : 0;
+					dtype = MAX(d1, d2);
+				}
+				else
+				{
+					fb_assert(DTYPE_IS_APPROX(dtype1) || DTYPE_IS_APPROX(dtype2));
+					dtype = dtype_double;
+				}
+			}
 			else
 			{
 				// mixed numeric and non-numeric:
@@ -1496,11 +1528,16 @@ void ArithmeticNode::getDescDialect3(thread_db* /*tdbb*/, dsc* desc, dsc& desc1,
 				if (dtype_int64 == dtype2)
 					dtype2 = dtype_double;
 
-				dtype = MAX(dtype1, dtype2);
+				dtype = CVT2_compare_priority[dtype1] > CVT2_compare_priority[dtype2] ? dtype1 : dtype2;
 			}
 
 			switch (dtype)
 			{
+				case dtype_ex_time_tz:
+				case dtype_ex_timestamp_tz:
+					fb_assert(false);
+					ERRD_post(Arg::Gds(isc_expression_eval_err));
+
 				case dtype_timestamp:
 				case dtype_timestamp_tz:
 				case dtype_sql_date:
@@ -1822,7 +1859,7 @@ dsc* ArithmeticNode::execute(thread_db* tdbb, jrd_req* request) const
 
 				impure->vlu_misc.vlu_double = MOV_get_double(tdbb, desc1) / divisor;
 
-				if (isinf(impure->vlu_misc.vlu_double))
+				if (std::isinf(impure->vlu_misc.vlu_double))
 				{
 					ERR_post(Arg::Gds(isc_arith_except) <<
 							 Arg::Gds(isc_exception_float_overflow));
@@ -1913,7 +1950,7 @@ dsc* ArithmeticNode::add(thread_db* tdbb, const dsc* desc, impure_value* value, 
 
 		value->vlu_misc.vlu_double = (blrOp == blr_subtract) ? d2 - d1 : d1 + d2;
 
-		if (isinf(value->vlu_misc.vlu_double))
+		if (std::isinf(value->vlu_misc.vlu_double))
 			ERR_post(Arg::Gds(isc_arith_except) << Arg::Gds(isc_exception_float_overflow));
 
 		result->dsc_dtype = DEFAULT_DOUBLE;
@@ -2010,7 +2047,7 @@ dsc* ArithmeticNode::add2(thread_db* tdbb, const dsc* desc, impure_value* value,
 
 		value->vlu_misc.vlu_double = (blrOp == blr_subtract) ? d2 - d1 : d1 + d2;
 
-		if (isinf(value->vlu_misc.vlu_double))
+		if (std::isinf(value->vlu_misc.vlu_double))
 			ERR_post(Arg::Gds(isc_arith_except) << Arg::Gds(isc_exception_float_overflow));
 
 		result->dsc_dtype = DEFAULT_DOUBLE;
@@ -2113,7 +2150,7 @@ dsc* ArithmeticNode::multiply(const dsc* desc, impure_value* value) const
 		const double d2 = MOV_get_double(tdbb, &value->vlu_desc);
 		value->vlu_misc.vlu_double = d1 * d2;
 
-		if (isinf(value->vlu_misc.vlu_double))
+		if (std::isinf(value->vlu_misc.vlu_double))
 		{
 			ERR_post(Arg::Gds(isc_arith_except) <<
 					 Arg::Gds(isc_exception_float_overflow));
@@ -2226,7 +2263,7 @@ dsc* ArithmeticNode::multiply2(const dsc* desc, impure_value* value) const
 		const double d2 = MOV_get_double(tdbb, &value->vlu_desc);
 		value->vlu_misc.vlu_double = d1 * d2;
 
-		if (isinf(value->vlu_misc.vlu_double))
+		if (std::isinf(value->vlu_misc.vlu_double))
 		{
 			ERR_post(Arg::Gds(isc_arith_except) <<
 					 Arg::Gds(isc_exception_float_overflow));
@@ -2345,7 +2382,7 @@ dsc* ArithmeticNode::divide2(const dsc* desc, impure_value* value) const
 		}
 		const double d1 = MOV_get_double(tdbb, &value->vlu_desc);
 		value->vlu_misc.vlu_double = d1 / d2;
-		if (isinf(value->vlu_misc.vlu_double))
+		if (std::isinf(value->vlu_misc.vlu_double))
 		{
 			ERR_post(Arg::Gds(isc_arith_except) <<
 					 Arg::Gds(isc_exception_float_overflow));
@@ -2518,6 +2555,11 @@ dsc* ArithmeticNode::addDateTime(thread_db* tdbb, const dsc* desc, impure_value*
 			ERR_post(Arg::Gds(isc_expression_eval_err) << Arg::Gds(isc_invalid_type_datetime_op));
 			break;
 
+		case dtype_ex_time_tz:
+		case dtype_ex_timestamp_tz:
+			fb_assert(false);
+			ERRD_post(Arg::Gds(isc_expression_eval_err));
+
 		case dtype_timestamp:
 		case dtype_timestamp_tz:
 		default:
@@ -2552,7 +2594,12 @@ dsc* ArithmeticNode::addSqlDate(const dsc* desc, impure_value* value) const
 		op1_is_date = true;
 	}
 	else
+	{
 		d1 = MOV_get_int64(tdbb, &value->vlu_desc, 0);
+
+		if (fb_utils::abs64Compare(d1, TimeStamp::MAX_DATE - TimeStamp::MIN_DATE) > 0)
+			ERR_post(Arg::Gds(isc_date_range_exceeded));
+	}
 
 	SINT64 d2;
 	// Coerce operand2 to a count of days
@@ -2563,7 +2610,12 @@ dsc* ArithmeticNode::addSqlDate(const dsc* desc, impure_value* value) const
 		op2_is_date = true;
 	}
 	else
+	{
 		d2 = MOV_get_int64(tdbb, desc, 0);
+
+		if (fb_utils::abs64Compare(d2, TimeStamp::MAX_DATE - TimeStamp::MIN_DATE) > 0)
+			ERR_post(Arg::Gds(isc_date_range_exceeded));
+	}
 
 	if (blrOp == blr_subtract && op1_is_date && op2_is_date)
 	{
@@ -2649,7 +2701,7 @@ dsc* ArithmeticNode::addSqlTime(thread_db* tdbb, const dsc* desc, impure_value* 
 	if (op1_is_time)
 	{
 		d1 = *(GDS_TIME*) op1_desc->dsc_address;
-		fb_assert(d1 >= 0 && d1 < ISC_TICKS_PER_DAY);
+		fb_assert(d1 >= 0 && d1 < TimeStamp::ISC_TICKS_PER_DAY);
 	}
 	else
 		d1 = MOV_get_int64(tdbb, op1_desc, ISC_TIME_SECONDS_PRECISION_SCALE);
@@ -2660,7 +2712,7 @@ dsc* ArithmeticNode::addSqlTime(thread_db* tdbb, const dsc* desc, impure_value* 
 	if (op2_is_time)
 	{
 		d2 = *(GDS_TIME*) op2_desc->dsc_address;
-		fb_assert(d2 >= 0 && d2 < ISC_TICKS_PER_DAY);
+		fb_assert(d2 >= 0 && d2 < TimeStamp::ISC_TICKS_PER_DAY);
 	}
 	else
 		d2 = MOV_get_int64(tdbb, op2_desc, ISC_TIME_SECONDS_PRECISION_SCALE);
@@ -2695,12 +2747,12 @@ dsc* ArithmeticNode::addSqlTime(thread_db* tdbb, const dsc* desc, impure_value* 
 
 	// Make the result positive
 	while (d2 < 0)
-		d2 += (ISC_TICKS_PER_DAY);
+		d2 += TimeStamp::ISC_TICKS_PER_DAY;
 
 	// And make it in the range of values for a day
-	d2 %= (ISC_TICKS_PER_DAY);
+	d2 %= TimeStamp::ISC_TICKS_PER_DAY;
 
-	fb_assert(d2 >= 0 && d2 < ISC_TICKS_PER_DAY);
+	fb_assert(d2 >= 0 && d2 < TimeStamp::ISC_TICKS_PER_DAY);
 
 	value->vlu_misc.vlu_sql_time_tz.utc_time = d2;
 
@@ -2873,7 +2925,7 @@ dsc* ArithmeticNode::addTimeStamp(thread_db* tdbb, const dsc* desc, impure_value
 			}
 
 			// This is dialect 1 subtraction returning double as before
-			value->vlu_misc.vlu_double = (double) d2 / ((double) ISC_TICKS_PER_DAY);
+			value->vlu_misc.vlu_double = (double) d2 / ((double) TimeStamp::ISC_TICKS_PER_DAY);
 			result->dsc_dtype = dtype_double;
 			result->dsc_length = sizeof(double);
 			result->dsc_scale = DIALECT_1_TIMESTAMP_SCALE;
@@ -2932,24 +2984,11 @@ dsc* ArithmeticNode::addTimeStamp(thread_db* tdbb, const dsc* desc, impure_value
 
 		// Convert the count of microseconds back to a date / time format
 
-		value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_date = d2 / (ISC_TICKS_PER_DAY);
-		value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_time = (d2 % ISC_TICKS_PER_DAY);
-
-		// Make sure the TIME portion is non-negative
-
-		if ((SLONG) value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_time < 0)
-		{
-			value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_time =
-				((SLONG) value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_time) + ISC_TICKS_PER_DAY;
-			--value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_date;
-		}
+		value->vlu_misc.vlu_timestamp_tz.utc_timestamp = TimeStamp::ticksToTimeStamp(d2);
 
 		if (!TimeStamp::isValidTimeStamp(*(ISC_TIMESTAMP*) &value->vlu_misc.vlu_timestamp_tz))
 			ERR_post(Arg::Gds(isc_datetime_range_exceeded));
 	}
-
-	fb_assert(value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_time >= 0 &&
-		value->vlu_misc.vlu_timestamp_tz.utc_timestamp.timestamp_time < ISC_TICKS_PER_DAY);
 
 	fb_assert(!(op1_tz.specified && op2_tz.specified));
 
@@ -4215,15 +4254,18 @@ dsc* CurrentTimeNode::execute(thread_db* tdbb, jrd_req* request) const
 	// Use the request timestamp.
 	fb_assert(!request->req_gmt_timestamp.isEmpty());
 
-	ISC_TIME time = request->req_gmt_timestamp.value().timestamp_time;
-	TimeStamp::round_time(time, precision);
+	ISC_TIMESTAMP_TZ currentTimeStamp;
+	currentTimeStamp.utc_timestamp = request->req_gmt_timestamp.value();
+	currentTimeStamp.time_zone = tdbb->getAttachment()->att_current_timezone;
 
 	impure->vlu_desc.dsc_dtype = dtype_sql_time_tz;
 	impure->vlu_desc.dsc_length = type_lengths[dtype_sql_time_tz];
 	impure->vlu_desc.dsc_address = (UCHAR*) &impure->vlu_misc.vlu_sql_time_tz;
 
-	impure->vlu_misc.vlu_sql_time_tz.utc_time = time;
 	impure->vlu_misc.vlu_sql_time_tz.time_zone = tdbb->getAttachment()->att_current_timezone;
+	impure->vlu_misc.vlu_sql_time_tz.utc_time = TimeZoneUtil::timeStampTzToTimeTz(currentTimeStamp).utc_time;
+
+	TimeStamp::round_time(impure->vlu_misc.vlu_sql_time_tz.utc_time, precision);
 
 	return &impure->vlu_desc;
 }
@@ -5436,7 +5478,7 @@ dsc* ExtractNode::execute(thread_db* tdbb, jrd_req* request) const
 				case blr_extract_second:
 				case blr_extract_millisecond:
 					TimeZoneUtil::decodeTime(*(ISC_TIME_TZ*) value->dsc_address,
-						false, &EngineCallbacks::instance, &times, &fractions);
+						false, TimeZoneUtil::NO_OFFSET, &times, &fractions);
 					break;
 
 				case blr_extract_timezone_hour:
@@ -5496,7 +5538,8 @@ dsc* ExtractNode::execute(thread_db* tdbb, jrd_req* request) const
 					break;
 
 				default:
-					TimeZoneUtil::decodeTimeStamp(*(ISC_TIMESTAMP_TZ*) value->dsc_address, false, &times, &fractions);
+					TimeZoneUtil::decodeTimeStamp(*(ISC_TIMESTAMP_TZ*) value->dsc_address, false, TimeZoneUtil::NO_OFFSET,
+						&times, &fractions);
 			}
 			break;
 
@@ -12078,11 +12121,11 @@ ValueExprNode* SysFuncCallNode::pass2(thread_db* tdbb, CompilerScratch* csb)
 {
 	ValueExprNode::pass2(tdbb, csb);
 
+	function->checkArgsMismatch(args->items.getCount());
+
 	dsc desc;
 	getDesc(tdbb, csb, &desc);
 	impureOffset = CMP_impure(csb, sizeof(impure_value));
-
-	function->checkArgsMismatch(args->items.getCount());
 
 	return this;
 }
@@ -12109,28 +12152,54 @@ ValueExprNode* SysFuncCallNode::dsqlPass(DsqlCompilerScratch* dsqlScratch)
 
 	node->function = SysFunction::lookup(name);
 
-	if (node->function && node->function->setParamsFunc)
+	if (node->function)
 	{
-		ValueListNode* inList = node->args;
-		Array<dsc*> argsArray;
-
-		for (unsigned int i = 0; i < inList->items.getCount(); ++i)
+		if (name == "MAKE_DBKEY")
 		{
-			ValueExprNode* p = inList->items[i];
-			DsqlDescMaker::fromNode(dsqlScratch, &p->nodDesc, p);
-			argsArray.add(&p->nodDesc);
+			// Special handling for system function MAKE_DBKEY:
+			// convert constant relation name into ID at the parsing time
+
+			auto literal = nodeAs<LiteralNode>(node->args->items[0]);
+
+			if (literal && literal->litDesc.isText())
+			{
+				const MetaName relName = literal->getText();
+
+				const dsql_rel* const relation =
+					METD_get_relation(dsqlScratch->getTransaction(), dsqlScratch, relName);
+
+				if (!relation)
+				{
+					status_exception::raise(
+						Arg::Gds(isc_sqlerr) << Arg::Num(-607) <<
+						Arg::Gds(isc_dsql_command_err) <<
+						Arg::Gds(isc_dsql_table_not_found) << relName);
+				}
+
+				node->args->items[0] = MAKE_const_slong(relation->rel_id);
+			}
 		}
 
-		DSqlDataTypeUtil dataTypeUtil(dsqlScratch);
-		node->function->setParamsFunc(&dataTypeUtil, node->function,
-			argsArray.getCount(), argsArray.begin());
-
-		for (unsigned int i = 0; i < inList->items.getCount(); ++i)
+		if (node->function->setParamsFunc)
 		{
-			ValueExprNode* p = inList->items[i];
-			PASS1_set_parameter_type(dsqlScratch, p,
-				[&] (dsc* desc) { *desc = p->nodDesc; },
-				false);
+			Array<dsc*> argsArray;
+
+			for (auto& item : node->args->items)
+			{
+				DsqlDescMaker::fromNode(dsqlScratch, &item->nodDesc, item);
+				argsArray.add(&item->nodDesc);
+			}
+
+			DSqlDataTypeUtil dataTypeUtil(dsqlScratch);
+			node->function->setParamsFunc(&dataTypeUtil, node->function,
+				argsArray.getCount(), argsArray.begin());
+
+			for (auto& item : node->args->items)
+			{
+				PASS1_set_parameter_type(dsqlScratch, item,
+					[&] (dsc* desc) { *desc = item->nodDesc; },
+					false);
+			}
 		}
 	}
 
@@ -13487,6 +13556,9 @@ static SINT64 getDayFraction(const dsc* d)
 	// Convert the input number to a double
 	CVT_move(d, &result, tdbb->getAttachment()->att_dec_status);
 
+	if (fb_utils::abs64Compare(result_days, TimeStamp::MAX_DATE - TimeStamp::MIN_DATE) > 0)
+		ERR_post(Arg::Gds(isc_date_range_exceeded));
+
 	// There's likely some loss of precision here due to rounding of number
 
 	// 08-Apr-2004, Nickolay Samofatov. Loss of precision manifested itself as bad
@@ -13500,13 +13572,13 @@ static SINT64 getDayFraction(const dsc* d)
 	// in hope that compiler rounding mode doesn't get in.
 
 #ifdef HAVE_LLRINT
-	return llrint(result_days * ISC_TICKS_PER_DAY);
+	return llrint(result_days * TimeStamp::ISC_TICKS_PER_DAY);
 #else
 	const double eps = 0.49999999999999;
 	if (result_days >= 0)
-		return (SINT64)(result_days * ISC_TICKS_PER_DAY + eps);
+		return (SINT64)(result_days * TimeStamp::ISC_TICKS_PER_DAY + eps);
 
-	return (SINT64) (result_days * ISC_TICKS_PER_DAY - eps);
+	return (SINT64) (result_days * TimeStamp::ISC_TICKS_PER_DAY - eps);
 #endif
 }
 
@@ -13529,10 +13601,7 @@ static SINT64 getTimeStampToIscTicks(thread_db* tdbb, const dsc* d)
 
 	CVT_move(d, &result, tdbb->getAttachment()->att_dec_status);
 
-	SINT64 delta = 0;
-
-	return ((SINT64) result_timestamp.utc_timestamp.timestamp_date) * ISC_TICKS_PER_DAY +
-		(SINT64) result_timestamp.utc_timestamp.timestamp_time - delta;
+	return TimeStamp::timeStampToTicks(result_timestamp.utc_timestamp);
 }
 
 // One of d1, d2 is time, the other is date

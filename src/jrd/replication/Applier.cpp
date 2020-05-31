@@ -146,6 +146,11 @@ namespace
 			return m_header->traNumber;
 		}
 
+		ULONG getProtocolVersion() const
+		{
+			return m_header->protocol;
+		}
+
 	private:
 		const Block* const m_header;
 		const UCHAR* m_data;
@@ -232,6 +237,10 @@ void Applier::process(thread_db* tdbb, ULONG length, const UCHAR* data)
 		BlockReader reader(length, data);
 
 		const auto traNum = reader.getTransactionId();
+		const auto protocol = reader.getProtocolVersion();
+
+		if (protocol != PROTOCOL_CURRENT_VERSION)
+			raiseError("Unsupported replication protocol version %u", protocol);
 
 		while (!reader.isEof())
 		{
@@ -314,10 +323,13 @@ void Applier::process(thread_db* tdbb, ULONG length, const UCHAR* data)
 				break;
 
 			case opExecuteSql:
+			case opExecuteSqlIntl:
 				{
+					const unsigned charset =
+						(op == opExecuteSql) ? CS_UTF8 : reader.getInt();
 					const string sql = reader.getString();
 					const MetaName ownerName = reader.getMetaName();
-					executeSql(tdbb, traNum, sql, ownerName);
+					executeSql(tdbb, traNum, charset, sql, ownerName);
 				}
 				break;
 
@@ -753,6 +765,7 @@ void Applier::storeBlob(thread_db* tdbb, TraNumber traNum, bid* blobId,
 
 void Applier::executeSql(thread_db* tdbb,
 						 TraNumber traNum,
+						 unsigned charset,
 						 const string& sql,
 						 const MetaName& owner)
 {
@@ -771,6 +784,7 @@ void Applier::executeSql(thread_db* tdbb,
 	UserId user(*attachment->att_user);
 	user.setUserName(owner);
 
+	AutoSetRestore<SSHORT> autoCharset(&attachment->att_charset, charset);
 	AutoSetRestore<UserId*> autoOwner(&attachment->att_user, &user);
 
 	DSQL_execute_immediate(tdbb, attachment, &transaction,

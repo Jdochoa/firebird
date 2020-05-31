@@ -76,10 +76,6 @@ public:
 	USHORT fil_fudge;					// Fudge factor for page relocation
 	HANDLE fil_desc;					// File descriptor
 	Firebird::RWLock* fil_ext_lock;		// file extend lock
-#ifdef SUPERSERVER_V2
-	Firebird::Mutex fil_mutex;
-	void* fil_io_events[MAX_FILE_IO];	// Overlapped I/O events
-#endif
 	USHORT fil_flags;
 	SCHAR fil_string[1];				// Expanded file name
 };

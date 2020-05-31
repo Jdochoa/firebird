@@ -105,11 +105,8 @@ using namespace Firebird;
 #endif
 #define TEXT		SCHAR
 
-#ifdef SUPERSERVER_V2
-static void release_io_event(jrd_file*, OVERLAPPED*);
-#endif
 static bool	maybeCloseFile(HANDLE&);
-static jrd_file* seek_file(jrd_file*, BufferDesc*, FbStatusVector*, OVERLAPPED*, OVERLAPPED**);
+static jrd_file* seek_file(jrd_file*, BufferDesc*, OVERLAPPED*);
 static jrd_file* setup_file(Database*, const Firebird::PathName&, HANDLE, bool, bool);
 static bool nt_error(const TEXT*, const jrd_file*, ISC_STATUS, FbStatusVector* const);
 static void adjustFileSystemCacheSize();
@@ -126,12 +123,7 @@ inline static DWORD getShareFlags(const bool shared_access, bool temporary = fal
 	return FILE_SHARE_READ | ((!temporary && shared_access) ? FILE_SHARE_WRITE : 0);
 }
 
-#ifdef SUPERSERVER_V2
-static const DWORD g_dwExtraFlags = FILE_FLAG_OVERLAPPED |
-									FILE_FLAG_NO_BUFFERING;
-#else
-static const DWORD g_dwExtraFlags = 0;
-#endif
+static const DWORD g_dwExtraFlags = FILE_FLAG_OVERLAPPED;
 
 static const DWORD g_dwExtraTempFlags = FILE_ATTRIBUTE_TEMPORARY |
 										FILE_FLAG_DELETE_ON_CLOSE;
@@ -182,19 +174,7 @@ void PIO_close(jrd_file* main_file)
  **************************************/
 	for (jrd_file* file = main_file; file; file = file->fil_next)
 	{
-		if (maybeCloseFile(file->fil_desc))
-		{
-#ifdef SUPERSERVER_V2
-			for (int i = 0; i < MAX_FILE_IO; i++)
-			{
-				if (file->fil_io_events[i])
-				{
-					CloseHandle((HANDLE) file->fil_io_events[i]);
-					file->fil_io_events[i] = 0;
-				}
-			}
-#endif
-		}
+		maybeCloseFile(file->fil_desc);
 	}
 }
 
@@ -393,6 +373,8 @@ void PIO_force_write(jrd_file* file, const bool forceWrite, const bool notUseFSC
 		else {
 			file->fil_flags &= ~FIL_no_fs_cache;
 		}
+
+		SetFileCompletionNotificationModes(hFile, FILE_SKIP_SET_EVENT_ON_HANDLE);
 	}
 }
 
@@ -420,36 +402,16 @@ void PIO_header(thread_db* tdbb, UCHAR* address, int length)
 	HANDLE desc = file->fil_desc;
 
 	OVERLAPPED overlapped;
-	OVERLAPPED* overlapped_ptr;
-
 	memset(&overlapped, 0, sizeof(OVERLAPPED));
-	overlapped_ptr = &overlapped;
-#ifdef SUPERSERVER_V2
-	if (!(overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
-		nt_error("Overlapped event", file, isc_io_read_err, 0);
-	ResetEvent(overlapped.hEvent);
-#endif
+	overlapped.hEvent = ThreadSync::getThread(FB_FUNCTION)->getIOEvent();
 
     DWORD actual_length;
-
-	if (!ReadFile(desc, address, length, &actual_length, overlapped_ptr) ||
+	DWORD ret = ReadFile(desc, address, length, NULL, &overlapped);
+	if (!GetOverlappedResult(desc, &overlapped, &actual_length, TRUE) ||
 		actual_length != (DWORD) length)
 	{
-#ifdef SUPERSERVER_V2
-		if (!GetOverlappedResult(desc, overlapped_ptr, &actual_length, TRUE) ||
-			actual_length != length)
-		{
-			CloseHandle(overlapped.hEvent);
-			nt_error("GetOverlappedResult", file, isc_io_read_err, 0);
-		}
-#else
 		nt_error("ReadFile", file, isc_io_read_err, 0);
-#endif
 	}
-
-#ifdef SUPERSERVER_V2
-	CloseHandle(overlapped.hEvent);
-#endif
 }
 
 // we need a class here only to return memory on shutdown and avoid
@@ -484,8 +446,7 @@ USHORT PIO_init_data(thread_db* tdbb, jrd_file* main_file, FbStatusVector* statu
 	bdb.bdb_page = PageNumber(0, startPage);
 
 	OVERLAPPED overlapped;
-	OVERLAPPED* overlapped_ptr;
-	jrd_file* file = seek_file(main_file, &bdb, status_vector, &overlapped, &overlapped_ptr);
+	jrd_file* file = seek_file(main_file, &bdb, &overlapped);
 
 	if (!file)
 		return 0;
@@ -505,13 +466,13 @@ USHORT PIO_init_data(thread_db* tdbb, jrd_file* main_file, FbStatusVector* statu
 		if (write_pages > leftPages)
 			write_pages = leftPages;
 
-		jrd_file* file1 = seek_file(main_file, &bdb, status_vector, &overlapped, &overlapped_ptr);
+		jrd_file* file1 = seek_file(main_file, &bdb, &overlapped);
 		fb_assert(file1 == file);
 
 		const DWORD to_write = (DWORD) write_pages * dbb->dbb_page_size;
 		DWORD written;
-
-		if (!WriteFile(file->fil_desc, zero_buff, to_write, &written, overlapped_ptr) ||
+		DWORD ret = WriteFile(file->fil_desc, zero_buff, to_write, NULL, &overlapped);
+		if (!GetOverlappedResult(file->fil_desc, &overlapped, &written, TRUE) ||
 			to_write != written)
 		{
 			nt_error("WriteFile", file, isc_io_write_err, status_vector);
@@ -587,6 +548,8 @@ jrd_file* PIO_open(thread_db* tdbb,
 		}
 	}
 
+	SetFileCompletionNotificationModes(desc, FILE_SKIP_SET_EVENT_ON_HANDLE);
+
 	return setup_file(dbb, string, desc, readOnly, shareMode);
 }
 
@@ -610,31 +573,19 @@ bool PIO_read(thread_db* tdbb, jrd_file* file, BufferDesc* bdb, Ods::pag* page, 
 	EngineCheckout cout(tdbb, FB_FUNCTION, true);
 	FileExtendLockGuard extLock(file->fil_ext_lock, false);
 
-	OVERLAPPED overlapped, *overlapped_ptr;
-	if (!(file = seek_file(file, bdb, status_vector, &overlapped, &overlapped_ptr)))
+	OVERLAPPED overlapped;
+	if (!(file = seek_file(file, bdb, &overlapped)))
 		return false;
 
 	HANDLE desc = file->fil_desc;
 
 	DWORD actual_length;
-	if (!ReadFile(desc, page, size, &actual_length, overlapped_ptr) ||
+	DWORD ret = ReadFile(desc, page, size, NULL, &overlapped);
+	if (!GetOverlappedResult(desc, &overlapped, &actual_length, TRUE) ||
 		actual_length != size)
 	{
-#ifdef SUPERSERVER_V2
-		if (!GetOverlappedResult(desc, overlapped_ptr, &actual_length, TRUE) ||
-			actual_length != size)
-		{
-			release_io_event(file, overlapped_ptr);
-			return nt_error("GetOverlappedResult", file, isc_io_read_err, status_vector);
-		}
-#else
 		return nt_error("ReadFile", file, isc_io_read_err, status_vector);
-#endif
 	}
-
-#ifdef SUPERSERVER_V2
-	release_io_event(file, overlapped_ptr);
-#endif
 
 	return true;
 }
@@ -788,7 +739,6 @@ bool PIO_write(thread_db* tdbb, jrd_file* file, BufferDesc* bdb, Ods::pag* page,
  *	Write a data page.
  *
  **************************************/
-	OVERLAPPED overlapped, *overlapped_ptr;
 
 	Database* const dbb = tdbb->getDatabase();
 
@@ -797,30 +747,19 @@ bool PIO_write(thread_db* tdbb, jrd_file* file, BufferDesc* bdb, Ods::pag* page,
 	EngineCheckout cout(tdbb, FB_FUNCTION, true);
 	FileExtendLockGuard extLock(file->fil_ext_lock, false);
 
-	file = seek_file(file, bdb, status_vector, &overlapped, &overlapped_ptr);
+	OVERLAPPED overlapped;
+	file = seek_file(file, bdb, &overlapped);
 	if (!file)
 		return false;
 
 	HANDLE desc = file->fil_desc;
 
 	DWORD actual_length;
-	if (!WriteFile(desc, page, size, &actual_length, overlapped_ptr) || actual_length != size )
+	DWORD ret = WriteFile(desc, page, size, NULL, &overlapped);
+	if (!GetOverlappedResult(desc, &overlapped, &actual_length, TRUE) || actual_length != size )
 	{
-#ifdef SUPERSERVER_V2
-		if (!GetOverlappedResult(desc, overlapped_ptr, &actual_length, TRUE) ||
-			actual_length != size)
-		{
-			release_io_event(file, overlapped_ptr);
-			return nt_error("GetOverlappedResult", file, isc_io_write_err, status_vector);
-		}
-#else
 		return nt_error("WriteFile", file, isc_io_write_err, status_vector);
-#endif
 	}
-
-#ifdef SUPERSERVER_V2
-	release_io_event(file, overlapped_ptr);
-#endif
 
 	return true;
 }
@@ -851,46 +790,9 @@ ULONG PIO_get_number_of_pages(const jrd_file* file, const USHORT pagesize)
 }
 
 
-#ifdef SUPERSERVER_V2
-static void release_io_event(jrd_file* file, OVERLAPPED* overlapped)
-{
-/**************************************
- *
- *	r e l e a s e _ i o _ e v e n t
- *
- **************************************
- *
- * Functional description
- *	Release an overlapped I/O event
- *	back to the file block.
- *
- **************************************/
-	if (!overlapped || !overlapped->hEvent)
-		return;
-
-	Firebird::MutexLockGuard guard(file->fil_mutex);
-
-	for (int i = 0; i < MAX_FILE_IO; i++)
-	{
-		if (!file->fil_io_events[i])
-		{
-			file->fil_io_events[i] = overlapped->hEvent;
-			overlapped->hEvent = NULL;
-			break;
-		}
-	}
-
-	if (overlapped->hEvent)
-		CloseHandle(overlapped->hEvent);
-}
-#endif
-
-
 static jrd_file* seek_file(jrd_file*	file,
 					 	   BufferDesc*	bdb,
-					 	   FbStatusVector*	/*status_vector*/,
-					 	   OVERLAPPED*	overlapped,
-					 	   OVERLAPPED**	overlapped_ptr)
+					 	   OVERLAPPED*	overlapped)
 {
 /**************************************
  *
@@ -925,30 +827,9 @@ static jrd_file* seek_file(jrd_file*	file,
 	overlapped->OffsetHigh = liOffset.HighPart;
 	overlapped->Internal = 0;
 	overlapped->InternalHigh = 0;
-	overlapped->hEvent = (HANDLE) 0;
 
-	*overlapped_ptr = overlapped;
-
-#ifdef SUPERSERVER_V2
-	Firebird::MutexLockGuard guard(file->fil_mutex);
-
-	for (USHORT i = 0; i < MAX_FILE_IO; i++)
-	{
-		if (overlapped->hEvent = (HANDLE) file->fil_io_events[i])
-		{
-			file->fil_io_events[i] = 0;
-			break;
-		}
-	}
-
-	if (!overlapped->hEvent && !(overlapped->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
-	{
-		nt_error("CreateEvent", file, isc_io_access_err, NULL/*status_vector*/);
-		return 0;
-	}
-
-	ResetEvent(overlapped->hEvent);
-#endif
+	ThreadSync* thd = ThreadSync::getThread(FB_FUNCTION);
+	overlapped->hEvent = thd->getIOEvent();
 
 	return file;
 }
@@ -978,9 +859,6 @@ static jrd_file* setup_file(Database* dbb,
 		file->fil_desc = desc;
 		file->fil_max_page = MAX_ULONG;
 		strcpy(file->fil_string, file_name.c_str());
-#ifdef SUPERSERVER_V2
-		memset(file->fil_io_events, 0, MAX_FILE_IO * sizeof(void*));
-#endif
 
 		if (read_only)
 			file->fil_flags |= FIL_readonly;

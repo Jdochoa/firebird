@@ -73,7 +73,9 @@ enum lck_t {
 	LCK_crypt,					// Crypt lock for single crypt thread
 	LCK_crypt_status,			// Notifies about changed database encryption status
 	LCK_record_gc,				// Record-level GC lock
-	LCK_alter_database			// ALTER DATABASE lock
+	LCK_alter_database,			// ALTER DATABASE lock
+	LCK_repl_state,				// Replication state lock
+	LCK_repl_tables				// Replication set lock
 };
 
 // Lock owner types

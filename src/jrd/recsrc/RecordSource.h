@@ -145,9 +145,16 @@ namespace Jrd
 
 	class FullTableScan : public RecordStream
 	{
+		struct Impure : public RecordSource::Impure
+		{
+			RecordNumber irsb_lower;
+			RecordNumber irsb_upper;
+		};
+
 	public:
 		FullTableScan(CompilerScratch* csb, const Firebird::string& alias,
-					  StreamType stream, jrd_rel* relation);
+					  StreamType stream, jrd_rel* relation,
+					  const Firebird::Array<DbKeyRangeNode*>& dbkeyRanges);
 
 		void open(thread_db* tdbb) const override;
 		void close(thread_db* tdbb) const override;
@@ -160,6 +167,7 @@ namespace Jrd
 	private:
 		const Firebird::string m_alias;
 		jrd_rel* const m_relation;
+		Firebird::Array<DbKeyRangeNode*> m_dbkeyRanges;
 	};
 
 	class BitmapTableScan : public RecordStream
