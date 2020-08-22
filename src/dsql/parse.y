@@ -615,6 +615,7 @@ using namespace Firebird;
 %token <metaNamePtr> HEX_DECODE
 %token <metaNamePtr> HEX_ENCODE
 %token <metaNamePtr> IDLE
+%token <metaNamePtr> INT128
 %token <metaNamePtr> INVOKER
 %token <metaNamePtr> IV
 %token <metaNamePtr> LAST_DAY
@@ -723,10 +724,10 @@ using namespace Firebird;
 	Jrd::ComparativeBoolNode::DsqlFlag cmpBoolFlag;
 	Jrd::dsql_fld* legacyField;
 	Jrd::ReturningClause* returningClause;
-	Firebird::MetaName* metaNamePtr;
-	Firebird::ObjectsArray<Firebird::MetaName>* metaNameArray;
+	Jrd::MetaName* metaNamePtr;
+	Firebird::ObjectsArray<Jrd::MetaName>* metaNameArray;
 	Firebird::PathName* pathNamePtr;
-	Firebird::QualifiedName* qualifiedNamePtr;
+	Jrd::QualifiedName* qualifiedNamePtr;
 	Firebird::string* stringPtr;
 	Jrd::IntlString* intlStringPtr;
 	Jrd::Lim64String* lim64ptr;
@@ -4270,6 +4271,7 @@ keyword_or_column
 	| VAR_POP
 	| BINARY				// added in FB 4.0
 	| DECFLOAT
+	| INT128
 	| LATERAL
 	| LOCAL
 	| LOCALTIME
@@ -4723,21 +4725,28 @@ non_charset_simple_type
 
 			$$->dtype = dtype_int64;
 			$$->length = sizeof(SINT64);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
+		}
+	| INT128
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_int128;
+			$$->length = sizeof(Int128);
+			$$->flags |= FLD_has_prec;
 		}
 	| integer_keyword
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_long;
 			$$->length = sizeof(SLONG);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| SMALLINT
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_short;
 			$$->length = sizeof(SSHORT);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| DATE
 		{
@@ -4759,7 +4768,7 @@ non_charset_simple_type
 				$$->dtype = dtype_sql_date;
 				$$->length = sizeof(ULONG);
 			}
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| TIME without_time_zone_opt
 		{
@@ -4768,7 +4777,7 @@ non_charset_simple_type
 			checkTimeDialect();
 			$$->dtype = dtype_sql_time;
 			$$->length = sizeof(SLONG);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| TIME WITH TIME ZONE
 		{
@@ -4777,21 +4786,21 @@ non_charset_simple_type
 			checkTimeDialect();
 			$$->dtype = dtype_sql_time_tz;
 			$$->length = sizeof(ISC_TIME_TZ);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| TIMESTAMP without_time_zone_opt
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_timestamp;
 			$$->length = sizeof(GDS_TIMESTAMP);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| TIMESTAMP WITH TIME ZONE
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_timestamp_tz;
 			$$->length = sizeof(ISC_TIMESTAMP_TZ);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| BOOLEAN
 		{
@@ -5007,7 +5016,7 @@ decfloat_type
 
 			$$ = newNode<dsql_fld>();
 			if (precision)
-				$$->flags |= FLD_has_len;
+				$$->flags |= FLD_has_prec;
 			$$->precision = precision == 0 ? 34 : (USHORT) precision;
 			$$->dtype = precision == 16 ? dtype_dec64 : dtype_dec128;
 			$$->length = precision == 16 ? sizeof(Decimal64) : sizeof(Decimal128);
@@ -5048,7 +5057,7 @@ prec_scale
 	| '(' signed_long_integer ')'
 		{
 			$$ = newNode<dsql_fld>();
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 
 			if ($2 < 1 || $2 > 38)
 				yyabandon(YYPOSNARG(2), -842, Arg::Gds(isc_precision_err2) << Arg::Num(1) << Arg::Num(38));
@@ -5105,7 +5114,7 @@ prec_scale
 	| '(' signed_long_integer ',' signed_long_integer ')'
 		{
 			$$ = newNode<dsql_fld>();
-			$$->flags |= (FLD_has_len | FLD_has_scale);
+			$$->flags |= (FLD_has_prec | FLD_has_scale);
 
 			if ($2 < 1 || $2 > 38)
 				yyabandon(YYPOSNARG(2), -842, Arg::Gds(isc_precision_err2) << Arg::Num(1) << Arg::Num(38));
@@ -5405,14 +5414,14 @@ set_bind_to
 			checkTimeDialect();
 			$$->dtype = dtype_ex_time_tz;
 			$$->length = sizeof(ISC_TIME_TZ_EX);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	| EXTENDED TIMESTAMP WITH TIME ZONE
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_ex_timestamp_tz;
 			$$->length = sizeof(ISC_TIMESTAMP_TZ_EX);
-			$$->flags |= FLD_has_len;
+			$$->flags |= FLD_has_prec;
 		}
 	;
 
@@ -6723,14 +6732,14 @@ exec_function
 	: udf
 		{
 			AssignmentNode* node = newNode<AssignmentNode>();
-			node->asgnTo = newNode<NullNode>();
+			node->asgnTo = NullNode::instance();
 			node->asgnFrom = $1;
 			$$ = node;
 		}
 	| non_aggregate_function
 		{
 			AssignmentNode* node = newNode<AssignmentNode>();
-			node->asgnTo = newNode<NullNode>();
+			node->asgnTo = NullNode::instance();
 			node->asgnFrom = $1;
 			$$ = node;
 		}
@@ -7750,11 +7759,11 @@ aggregate_function
 			$$ = $1;
 
 			if ($$->aggInfo.blr == blr_agg_count2 && !$$->arg)	// count(*)
-				$$->arg = newNode<ValueIfNode>($5, MAKE_const_slong(1), newNode<NullNode>());
+				$$->arg = newNode<ValueIfNode>($5, MAKE_const_slong(1), NullNode::instance());
 			else
 			{
 				fb_assert($$->arg);
-				$$->arg = newNode<ValueIfNode>($5, $$->arg, newNode<NullNode>());
+				$$->arg = newNode<ValueIfNode>($5, $$->arg, NullNode::instance());
 			}
 		}
 	;
@@ -7854,15 +7863,15 @@ window_function
 	| LAG '(' value ',' value ',' value ')'
 		{ $$ = newNode<LagWinNode>($3, $5, $7); }
 	| LAG '(' value ',' value ')'
-		{ $$ = newNode<LagWinNode>($3, $5, newNode<NullNode>()); }
+		{ $$ = newNode<LagWinNode>($3, $5, NullNode::instance()); }
 	| LAG '(' value ')'
-		{ $$ = newNode<LagWinNode>($3, MAKE_const_slong(1), newNode<NullNode>()); }
+		{ $$ = newNode<LagWinNode>($3, MAKE_const_slong(1), NullNode::instance()); }
 	| LEAD '(' value ',' value ',' value ')'
 		{ $$ = newNode<LeadWinNode>($3, $5, $7); }
 	| LEAD '(' value ',' value ')'
-		{ $$ = newNode<LeadWinNode>($3, $5, newNode<NullNode>()); }
+		{ $$ = newNode<LeadWinNode>($3, $5, NullNode::instance()); }
 	| LEAD '(' value ')'
-		{ $$ = newNode<LeadWinNode>($3, MAKE_const_slong(1), newNode<NullNode>()); }
+		{ $$ = newNode<LeadWinNode>($3, MAKE_const_slong(1), NullNode::instance()); }
 	| NTILE '(' ntile_arg ')'
 		{ $$ = newNode<NTileWinNode>($3); }
 	;
@@ -8367,7 +8376,7 @@ case_abbreviation
 	: NULLIF '(' value ',' value ')'
 		{
 			ComparativeBoolNode* condition = newNode<ComparativeBoolNode>(blr_eql, $3, $5);
-			$$ = newNode<ValueIfNode>(condition, newNode<NullNode>(), $3);
+			$$ = newNode<ValueIfNode>(condition, NullNode::instance(), $3);
 		}
 	| IIF '(' search_condition ',' value ',' value ')'
 		{ $$ = newNode<ValueIfNode>($3, $5, $7); }
@@ -8466,10 +8475,10 @@ searched_case
 %type <valueIfNode> searched_when_clause
 searched_when_clause
 	: WHEN search_condition THEN case_result
-		{ $$ = newNode<ValueIfNode>($2, $4, newNode<NullNode>()); }
+		{ $$ = newNode<ValueIfNode>($2, $4, NullNode::instance()); }
 	| searched_when_clause WHEN search_condition THEN case_result
 		{
-			ValueIfNode* cond = newNode<ValueIfNode>($3, $5, newNode<NullNode>());
+			ValueIfNode* cond = newNode<ValueIfNode>($3, $5, NullNode::instance());
 			ValueIfNode* last = $1;
 			ValueIfNode* next;
 
@@ -8552,14 +8561,14 @@ distinct_noise
 %type <valueExprNode> null_value
 null_value
 	: NULL
-		{ $$ = newNode<NullNode>(); }
+		{ $$ = NullNode::instance(); }
 	| UNKNOWN
 		{
 			dsql_fld* field = newNode<dsql_fld>();
 			field->dtype = dtype_boolean;
 			field->length = sizeof(UCHAR);
 
-			CastNode* castNode = newNode<CastNode>(newNode<NullNode>(), field);
+			CastNode* castNode = newNode<CastNode>(NullNode::instance(), field);
 			castNode->dsqlAlias = "CONSTANT";
 			$$ = castNode;
 		}

@@ -345,7 +345,8 @@ static const UCHAR
 	window_win[] = { op_byte, op_window_win, 0},
 	relation_field[] = { op_line, op_indent, op_byte, op_literal,
 						 op_line, op_indent, op_byte, op_literal, op_pad, op_line, 0},
-	store3[] = { op_line, op_byte, op_line, op_verb, op_verb, op_verb, 0};
+	store3[] = { op_line, op_byte, op_line, op_verb, op_verb, op_verb, 0},
+	marks[] = { op_byte, op_literal, op_line, op_verb, 0};
 
 
 #include "../jrd/blp.h"

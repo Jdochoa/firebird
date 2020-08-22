@@ -868,7 +868,6 @@ if test "$EDITLINE_FLG" = "Y"; then
 				AC_CHECK_LIB(tinfo, tgetent, TERMLIB=tinfo, \
 					AC_MSG_ERROR(termcap support not found)))))
 	AC_SUBST(TERMLIB)
-	XE_APPEND(-l$TERMLIB, LIBS)
 fi
 
 AC_SEARCH_LIBS(inet_aton, resolv)

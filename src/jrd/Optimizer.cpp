@@ -110,7 +110,7 @@ namespace
 				cast = FB_NEW_POOL(csb->csb_pool) CastNode(csb->csb_pool);
 				cast->source = value;
 				cast->castDesc = desc;
-				cast->impureOffset = CMP_impure(csb, sizeof(impure_value));
+				cast->impureOffset = csb->allocImpure<impure_value>();
 			}
 
 			value = cast;
@@ -140,7 +140,7 @@ namespace
 			FB_NEW_POOL(csb->csb_pool) BoolAsValueNode(csb->csb_pool);
 		newValue->boolean = cmpNode;
 
-		newValue->impureOffset = CMP_impure(csb, sizeof(impure_value));
+		newValue->impureOffset = csb->allocImpure<impure_value>();
 
 		return newValue;
 	}
@@ -864,9 +864,10 @@ void OptimizerRetrieval::analyzeNavigation(const InversionCandidateList& inversi
 					for (BoolExprNode* const* iter2 = otherCandidate->matches.begin();
 						iter2 != otherCandidate->matches.end(); ++iter2)
 					{
-						if (candidate->matches.exist(*iter2))
+						if (candidate->matches.exist(*iter2) &&
+							betterInversion(otherCandidate, candidate, true))
 						{
-							usableIndex = betterInversion(candidate, otherCandidate, true);
+							usableIndex = false;
 							break;
 						}
 					}
@@ -963,8 +964,7 @@ bool OptimizerRetrieval::betterInversion(const InversionCandidate* inv1,
 				{
 					// For the same number of indexes compare number of matched segments.
 					// Note the inverted condition: the more matched segments the better.
-					compareSelectivity =
-						(inv2->matchedSegments - inv1->matchedSegments);
+					compareSelectivity = (inv2->matchedSegments - inv1->matchedSegments);
 
 					if (compareSelectivity == 0 && !ignoreUnmatched)
 					{
@@ -1290,7 +1290,7 @@ InversionNode* OptimizerRetrieval::makeIndexScanNode(IndexScratch* indexScratch)
 	{
 		if (segment[i]->scanType == segmentScanMissing)
 		{
-			*lower++ = *upper++ = FB_NEW_POOL(*tdbb->getDefaultPool()) NullNode(*tdbb->getDefaultPool());
+			*lower++ = *upper++ = NullNode::instance();
 			ignoreNullsOnScan = false;
 		}
 		else
@@ -1361,7 +1361,7 @@ InversionNode* OptimizerRetrieval::makeIndexScanNode(IndexScratch* indexScratch)
 	// mark the index as utilized for the purposes of this compile
 	idx->idx_runtime_flags |= idx_used;
 
-	const ULONG impure = csb ? CMP_impure(csb, sizeof(impure_inversion)) : 0;
+	const ULONG impure = csb ? csb->allocImpure<impure_inversion>() : 0;
 	return FB_NEW_POOL(pool) InversionNode(retrieval, impure);
 }
 
@@ -2195,7 +2195,7 @@ InversionCandidate* OptimizerRetrieval::matchDbKey(BoolExprNode* boolean) const
 			fb_assert(lower == upper);
 
 			InversionNode* const inversion = FB_NEW_POOL(pool) InversionNode(lower, n);
-			inversion->impure = CMP_impure(csb, sizeof(impure_inversion));
+			inversion->impure = csb->allocImpure<impure_inversion>();
 			invCandidate->inversion = inversion;
 		}
 		else

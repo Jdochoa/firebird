@@ -550,6 +550,12 @@ const SvcSwitches nrestOptions[] =
 	{0, 0, 0, 0, 0}
 };
 
+const SvcSwitches nfixOptions[] =
+{
+	{"dbname", putStringArgument, 0, isc_spb_dbname, 0},
+	{0, 0, 0, 0, 0}
+};
+
 const SvcSwitches traceStartOptions[] =
 {
 	{"trc_cfg", putFileFromArgument, 0, isc_spb_trc_cfg, 0},
@@ -590,6 +596,7 @@ const SvcSwitches actionSwitch[] =
 	{"action_modify_user", putSingleTag, addmodOptions, isc_action_svc_modify_user, 0},
 	{"action_nbak", putSingleTag, nbackOptions, isc_action_svc_nbak, isc_info_svc_line},
 	{"action_nrest", putSingleTag, nrestOptions, isc_action_svc_nrest, isc_info_svc_line},
+	{"action_nfix", putSingleTag, nfixOptions, isc_action_svc_nfix, isc_info_svc_line},
 	{"action_trace_start", putSingleTag, traceStartOptions, isc_action_svc_trace_start, isc_info_svc_to_eof},
 	{"action_trace_suspend", putSingleTag, traceChgStateOptions, isc_action_svc_trace_suspend, isc_info_svc_line},
 	{"action_trace_resume", putSingleTag, traceChgStateOptions, isc_action_svc_trace_resume, isc_info_svc_line},

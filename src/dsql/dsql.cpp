@@ -283,7 +283,7 @@ bool DsqlDmlRequest::fetch(thread_db* tdbb, UCHAR* msgBuffer)
 
 	thread_db::TimerGuard timerGuard(tdbb, req_timer, false);
 	if (req_timer && req_timer->expired())
-		tdbb->checkCancelState(true);
+		tdbb->checkCancelState();
 
 	UCHAR* dsqlMsgBuffer = req_msg_buffers[message->msg_buffer_number];
 	if (prefetchedFirstRow)

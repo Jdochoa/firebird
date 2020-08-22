@@ -3869,12 +3869,12 @@ static processing_state show_domains(const SCHAR* domain_name)
 			}
 
 			// Length for CHARs
-			if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR)) {
+			if ((FLD.RDB$FIELD_TYPE == blr_text) || (FLD.RDB$FIELD_TYPE == blr_varying)) {
 				isqlGlob.printf("(%d)", ISQL_get_field_length(FLD.RDB$FIELD_NAME));
 			}
 
 			// Blob domains
-			if (FLD.RDB$FIELD_TYPE == BLOB)
+			if (FLD.RDB$FIELD_TYPE == blr_blob)
 			{
 				isqlGlob.printf(" segment %u, subtype ", (USHORT) FLD.RDB$SEGMENT_LENGTH);
 				const int subtype  = FLD.RDB$FIELD_SUB_TYPE;
@@ -3887,9 +3887,9 @@ static processing_state show_domains(const SCHAR* domain_name)
 			}
 
 			// Show international character sets
-			if (((FLD.RDB$FIELD_TYPE == T_CHAR ||
-				FLD.RDB$FIELD_TYPE == VARCHAR) && FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary) ||
-				FLD.RDB$FIELD_TYPE == BLOB)
+			if (((FLD.RDB$FIELD_TYPE == blr_text ||
+				FLD.RDB$FIELD_TYPE == blr_varying) && FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary) ||
+				FLD.RDB$FIELD_TYPE == blr_blob)
 			{
 				show_charsets(NULL, FLD.RDB$FIELD_NAME, true, false, false, false);
 			}
@@ -3919,9 +3919,9 @@ static processing_state show_domains(const SCHAR* domain_name)
 			}
 
 			// Show collations
-			if (FLD.RDB$FIELD_TYPE == T_CHAR ||
-				FLD.RDB$FIELD_TYPE == VARCHAR ||
-				FLD.RDB$FIELD_TYPE == BLOB)
+			if (FLD.RDB$FIELD_TYPE == blr_text ||
+				FLD.RDB$FIELD_TYPE == blr_varying ||
+				FLD.RDB$FIELD_TYPE == blr_blob)
 			{
 				show_charsets(NULL, FLD.RDB$FIELD_NAME, false, true, true, true);
 			}
@@ -4369,7 +4369,7 @@ static processing_state show_func(const SCHAR* funcname)
 
 			// Use RDB$CHARACTER_LENGTH instead of RDB$FIELD_LENGTH
 			//   FSG 19.Nov.2000
-			if ((FLD.RDB$FIELD_TYPE == T_CHAR || FLD.RDB$FIELD_TYPE == VARCHAR) &&
+			if ((FLD.RDB$FIELD_TYPE == blr_text || FLD.RDB$FIELD_TYPE == blr_varying) &&
 				!FLD.RDB$CHARACTER_LENGTH.NULL)
 			{
 				isqlGlob.printf("(%d)", FLD.RDB$CHARACTER_LENGTH);
@@ -4377,9 +4377,9 @@ static processing_state show_func(const SCHAR* funcname)
 
 			// Show international character sets and collations
 
-			if (((FLD.RDB$FIELD_TYPE == T_CHAR ||
-				FLD.RDB$FIELD_TYPE == VARCHAR) && FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary) ||
-				FLD.RDB$FIELD_TYPE == BLOB)
+			if (((FLD.RDB$FIELD_TYPE == blr_text ||
+				FLD.RDB$FIELD_TYPE == blr_varying) && FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary) ||
+				FLD.RDB$FIELD_TYPE == blr_blob)
 			{
 				SSHORT charset = 0, collation = 0;
 
@@ -4509,9 +4509,10 @@ static processing_state show_func_legacy(const SCHAR* object)
 				// Handle Integral subtypes NUMERIC and DECIMAL
 				// We are ODS >= 10
 				if ( (isqlGlob.major_ods >= ODS_VERSION10) &&
-						((FNA.RDB$FIELD_TYPE == SMALLINT) ||
-						(FNA.RDB$FIELD_TYPE == INTEGER) ||
-						(FNA.RDB$FIELD_TYPE == BIGINT)) )
+						((FNA.RDB$FIELD_TYPE == blr_short) ||
+						(FNA.RDB$FIELD_TYPE == blr_long) ||
+						(FNA.RDB$FIELD_TYPE == blr_int64) ||
+						(FNA.RDB$FIELD_TYPE == blr_int128)) )
 				{
 					// We are Dialect >=3 since FIELD_PRECISION is non-NULL
 					if (!FNA.RDB$FIELD_PRECISION.NULL &&
@@ -4529,11 +4530,11 @@ static processing_state show_func_legacy(const SCHAR* object)
 				if (!precision_known)
 				{
 					// Take a stab at numerics and decimals
-					if ((FNA.RDB$FIELD_TYPE == SMALLINT) && (FNA.RDB$FIELD_SCALE < 0))
+					if ((FNA.RDB$FIELD_TYPE == blr_short) && (FNA.RDB$FIELD_SCALE < 0))
 						isqlGlob.printf("NUMERIC(4, %d)", -FNA.RDB$FIELD_SCALE);
-					else if ((FNA.RDB$FIELD_TYPE == INTEGER) && (FNA.RDB$FIELD_SCALE < 0))
+					else if ((FNA.RDB$FIELD_TYPE == blr_long) && (FNA.RDB$FIELD_SCALE < 0))
 						isqlGlob.printf("NUMERIC(9, %d)", -FNA.RDB$FIELD_SCALE);
-					else if ((FNA.RDB$FIELD_TYPE == DOUBLE_PRECISION) && (FNA.RDB$FIELD_SCALE < 0))
+					else if ((FNA.RDB$FIELD_TYPE == blr_double) && (FNA.RDB$FIELD_SCALE < 0))
 						isqlGlob.printf("NUMERIC(15, %d)", -FNA.RDB$FIELD_SCALE);
 					else
 						isqlGlob.printf("%s", Column_types[i].type_name);
@@ -4543,8 +4544,8 @@ static processing_state show_func_legacy(const SCHAR* object)
 
 		}
 		// Print length where appropriate
-		if (FNA.RDB$FIELD_TYPE == T_CHAR || FNA.RDB$FIELD_TYPE == VARCHAR ||
-			FNA.RDB$FIELD_TYPE == CSTRING)
+		if (FNA.RDB$FIELD_TYPE == blr_text || FNA.RDB$FIELD_TYPE == blr_varying ||
+			FNA.RDB$FIELD_TYPE == blr_cstring)
 		{
 			FOR V4FNA IN RDB$FUNCTION_ARGUMENTS CROSS
 				CHARSET IN RDB$CHARACTER_SETS OVER RDB$CHARACTER_SET_ID
@@ -4912,7 +4913,7 @@ static void printMap(bool extract, bool global, char* name, char* usng, char* pl
 	{
 		isqlGlob.printf("CREATE ");
 		if (global)
-			isqlGlob.printf("GLOBAL ");
+			isqlGlob.printf("OR ALTER GLOBAL ");
 	}
 	printIdent(extract, name, extract ? "MAPPING %s " : "%s ");
 
@@ -5265,7 +5266,7 @@ static processing_state show_proc(const SCHAR* procname)
 
 			// Use RDB$CHARACTER_LENGTH instead of RDB$FIELD_LENGTH
 			//   FSG 19.Nov.2000
-			if ((FLD.RDB$FIELD_TYPE == T_CHAR || FLD.RDB$FIELD_TYPE == VARCHAR) &&
+			if ((FLD.RDB$FIELD_TYPE == blr_text || FLD.RDB$FIELD_TYPE == blr_varying) &&
 				!FLD.RDB$CHARACTER_LENGTH.NULL)
 			{
 				isqlGlob.printf("(%d)", FLD.RDB$CHARACTER_LENGTH);
@@ -5273,9 +5274,9 @@ static processing_state show_proc(const SCHAR* procname)
 
 			// Show international character sets and collations
 
-			if (((FLD.RDB$FIELD_TYPE == T_CHAR ||
-				FLD.RDB$FIELD_TYPE == VARCHAR) && FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary) ||
-				FLD.RDB$FIELD_TYPE == BLOB)
+			if (((FLD.RDB$FIELD_TYPE == blr_text ||
+				FLD.RDB$FIELD_TYPE == blr_varying) && FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary) ||
+				FLD.RDB$FIELD_TYPE == blr_blob)
 			{
 				SSHORT charset = 0;
 				if (!FLD.RDB$CHARACTER_SET_ID.NULL)
@@ -5797,7 +5798,7 @@ static processing_state show_table(const SCHAR* relation_name, bool isView)
 			return ps_ERR;
 		}
 
-		if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR)) {
+		if ((FLD.RDB$FIELD_TYPE == blr_text) || (FLD.RDB$FIELD_TYPE == blr_varying)) {
 			isqlGlob.printf("(%d)", ISQL_get_field_length(FLD.RDB$FIELD_NAME));
 
 			if (FLD.RDB$FIELD_SUB_TYPE != fb_text_subtype_binary)
@@ -5807,7 +5808,7 @@ static processing_state show_table(const SCHAR* relation_name, bool isView)
 			}
 		}
 
-		if (FLD.RDB$FIELD_TYPE == BLOB)
+		if (FLD.RDB$FIELD_TYPE == blr_blob)
 		{
 			isqlGlob.printf(" segment %u, subtype ", (USHORT) FLD.RDB$SEGMENT_LENGTH);
 			const int subtype  = FLD.RDB$FIELD_SUB_TYPE;
@@ -5868,8 +5869,8 @@ static processing_state show_table(const SCHAR* relation_name, bool isView)
 		}
 
 		// Handle collations
-		if ((FLD.RDB$FIELD_TYPE == T_CHAR) || (FLD.RDB$FIELD_TYPE == VARCHAR) ||
-			(FLD.RDB$FIELD_TYPE == BLOB))
+		if ((FLD.RDB$FIELD_TYPE == blr_text) || (FLD.RDB$FIELD_TYPE == blr_varying) ||
+			(FLD.RDB$FIELD_TYPE == blr_blob))
 		{
 			show_charsets(relation_name, RFR.RDB$FIELD_NAME, false, true, true, true);
 		}

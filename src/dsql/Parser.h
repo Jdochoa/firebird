@@ -201,8 +201,7 @@ public:
 private:
 	template <typename T> T* setupNode(Node* node)
 	{
-		node->line = yyposn.firstLine;
-		node->column = yyposn.firstColumn;
+		setNodeLineColumn(node);
 		return static_cast<T*>(node);
 	}
 
@@ -254,9 +253,9 @@ private:
 	void yyabandon(const Position& position, SLONG, ISC_STATUS);
 	void yyabandon(const Position& position, SLONG, const Firebird::Arg::StatusVector& status);
 
-	Firebird::MetaName optName(Firebird::MetaName* name)
+	MetaName optName(MetaName* name)
 	{
-		return (name ? *name : Firebird::MetaName());
+		return (name ? *name : MetaName());
 	}
 
 	void transformString(const char* start, unsigned length, Firebird::string& dest);
@@ -337,7 +336,7 @@ private:
 		return clause != 0;
 	}
 
-	bool isDuplicateClause(const Firebird::MetaName& clause)
+	bool isDuplicateClause(const MetaName& clause)
 	{
 		return clause.hasData();
 	}
@@ -364,6 +363,8 @@ private:
 
 	void yyMoreStack(yyparsestate* yyps);
 	yyparsestate* yyNewState(int size);
+
+	void setNodeLineColumn(Node* node);
 
 private:
 	int parseAux();
@@ -392,6 +393,7 @@ private:
 	Position yyretposn;
 
 	int yynerrs;
+	int yym;
 
 	// Current parser state
 	yyparsestate* yyps;

@@ -35,7 +35,7 @@ using namespace Replication;
 Replicator::Replicator(MemoryPool& pool,
 					   Manager* manager,
 					   const Guid& guid,
-					   const MetaName& user,
+					   const MetaString& user,
 					   bool cleanupTransactions)
 	: PermanentStorage(pool),
 	  m_manager(manager),
@@ -58,7 +58,7 @@ void Replicator::flush(BatchBlock& block, FlushReason reason, ULONG flags)
 	fb_assert(orgLength > sizeof(Block));
 	block.header.protocol = PROTOCOL_CURRENT_VERSION;
 	block.header.dataLength = orgLength - sizeof(Block);
-	block.header.metaLength = (ULONG) (block.metadata.getCount() * sizeof(MetaName));
+	block.header.metaLength = (ULONG) (block.metadata.getCount() * sizeof(MetaString));
 	block.header.timestamp = TimeZoneUtil::getCurrentGmtTimeStamp().utc_timestamp;
 	block.header.flags |= flags;
 
@@ -194,7 +194,7 @@ bool Replicator::commitTransaction(Transaction* transaction)
 
 		auto& txnData = transaction->getData();
 
-		for (const auto generator : m_generators)
+		for (const auto& generator : m_generators)
 		{
 			fb_assert(generator.name.hasData());
 
@@ -418,17 +418,44 @@ bool Replicator::storeBlob(Transaction* transaction,
 		MutexLockGuard guard(m_mutex, FB_FUNCTION);
 
 		UCharBuffer buffer;
-
-		const auto length = blob->getLength();
-		const auto data = buffer.getBuffer(length);
-		blob->getSegment(length, data);
+		const auto bufferLength = MAX_USHORT;
+		auto data = buffer.getBuffer(bufferLength);
 
 		auto& txnData = transaction->getData();
+		bool newOp = true;
 
-		txnData.putTag(opStoreBlob);
-		txnData.putInt(blobId.gds_quad_high);
-		txnData.putInt(blobId.gds_quad_low);
-		txnData.putBinary(length, data);
+		while (!blob->isEof())
+		{
+			const auto segmentLength = blob->getSegment(bufferLength, data);
+
+			if (!segmentLength)
+				break;
+
+			if (newOp)
+			{
+				txnData.putTag(opStoreBlob);
+				txnData.putInt(blobId.gds_quad_high);
+				txnData.putInt(blobId.gds_quad_low);
+				newOp = false;
+			}
+
+			txnData.putBinary(segmentLength, data);
+
+			if (txnData.getSize() > m_config->bufferSize)
+			{
+				flush(txnData, FLUSH_OVERFLOW);
+				newOp = true;
+			}
+		}
+
+		if (newOp)
+		{
+			txnData.putTag(opStoreBlob);
+			txnData.putInt(blobId.gds_quad_high);
+			txnData.putInt(blobId.gds_quad_low);
+		}
+
+		txnData.putBinary(0, NULL);
 
 		if (txnData.getSize() > m_config->bufferSize)
 			flush(txnData, FLUSH_OVERFLOW);

@@ -627,7 +627,7 @@ const char* TraceServiceImpl::getUserName()
 
 const char* TraceServiceImpl::getRoleName()
 {
-	return NULL;
+	return m_svc->getRoleName().c_str();
 }
 
 const char* TraceServiceImpl::getCharSet()

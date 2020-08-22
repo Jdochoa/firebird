@@ -23,6 +23,7 @@
 #include "firebird.h"
 #include "../jrd/Relation.h"
 
+#include "../jrd/met.h"
 #include "../jrd/tra.h"
 #include "../jrd/btr_proto.h"
 #include "../jrd/dpm_proto.h"
@@ -133,7 +134,7 @@ RelationPages* jrd_rel::getPagesInternal(thread_db* tdbb, TraNumber tran, bool a
 		const index_desc* const end = indices->items + idx_count;
 		for (index_desc* idx = indices->items; idx < end; idx++)
 		{
-			Firebird::MetaName idx_name;
+			MetaName idx_name;
 			MET_lookup_index(tdbb, idx_name, this->rel_name, idx->idx_id + 1);
 
 			idx->idx_root = 0;
@@ -323,6 +324,45 @@ bool jrd_rel::hasTriggers() const
 			return true;
 	}
 	return false;
+}
+
+void jrd_rel::releaseTriggers(thread_db* tdbb, bool destroy)
+{
+	MET_release_triggers(tdbb, &rel_pre_store, destroy);
+	MET_release_triggers(tdbb, &rel_post_store, destroy);
+	MET_release_triggers(tdbb, &rel_pre_erase, destroy);
+	MET_release_triggers(tdbb, &rel_post_erase, destroy);
+	MET_release_triggers(tdbb, &rel_pre_modify, destroy);
+	MET_release_triggers(tdbb, &rel_post_modify, destroy);
+}
+
+void jrd_rel::replaceTriggers(thread_db* tdbb, TrigVector** triggers)
+{
+	TrigVector* tmp_vector;
+
+	tmp_vector = rel_pre_store;
+	rel_pre_store = triggers[TRIGGER_PRE_STORE];
+	MET_release_triggers(tdbb, &tmp_vector, true);
+
+	tmp_vector = rel_post_store;
+	rel_post_store = triggers[TRIGGER_POST_STORE];
+	MET_release_triggers(tdbb, &tmp_vector, true);
+
+	tmp_vector = rel_pre_erase;
+	rel_pre_erase = triggers[TRIGGER_PRE_ERASE];
+	MET_release_triggers(tdbb, &tmp_vector, true);
+
+	tmp_vector = rel_post_erase;
+	rel_post_erase = triggers[TRIGGER_POST_ERASE];
+	MET_release_triggers(tdbb, &tmp_vector, true);
+
+	tmp_vector = rel_pre_modify;
+	rel_pre_modify = triggers[TRIGGER_PRE_MODIFY];
+	MET_release_triggers(tdbb, &tmp_vector, true);
+
+	tmp_vector = rel_post_modify;
+	rel_post_modify = triggers[TRIGGER_POST_MODIFY];
+	MET_release_triggers(tdbb, &tmp_vector, true);
 }
 
 Lock* jrd_rel::createLock(thread_db* tdbb, MemoryPool* pool, jrd_rel* relation, lck_t lckType, bool noAst)

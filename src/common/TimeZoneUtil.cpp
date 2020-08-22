@@ -598,6 +598,17 @@ void TimeZoneUtil::extractOffset(const ISC_TIMESTAMP_TZ& timeStampTz, SSHORT* of
 	*offset = displacement;
 }
 
+// Extracts the offset (+- minutes) from a offset- or region-based time with time zone.
+void TimeZoneUtil::extractOffset(const ISC_TIME_TZ& timeTz, SSHORT* offset)
+{
+	ISC_TIMESTAMP_TZ tsTz;
+	tsTz.utc_timestamp.timestamp_date = TIME_TZ_BASE_DATE;
+	tsTz.utc_timestamp.timestamp_time = timeTz.utc_time;
+	tsTz.time_zone = timeTz.time_zone;
+
+	extractOffset(tsTz, offset);
+}
+
 // Converts a time from local to UTC.
 void TimeZoneUtil::localTimeToUtc(ISC_TIME& time, ISC_USHORT timeZone)
 {

@@ -1,5 +1,5 @@
 temp/
-gen/
+/gen/
 output_Win32/
 output_x64/
 examples/prebuilt/
@@ -21,3 +21,6 @@ src/dsql/parse.cpp
 .vscode/.browse.VC.db
 extern/decNumber/libdecFloat*.a
 /Makefile
+/src/include/gen/parse.h
+/src/include/gen/autoconfig.auto
+/src/include/gen/autoconfig.h

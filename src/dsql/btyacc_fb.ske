@@ -179,9 +179,20 @@ void Parser::yyFreeState(Parser::yyparsestate* p)
 }
 
 
+void Parser::setNodeLineColumn(Node* node)
+{
+	// Check if we are not accessing the position stack below its base.
+	if (&YYPOSNARG(1) >= yyps->ps)
+	{
+		node->line = YYPOSNARG(1).firstLine;
+		node->column = YYPOSNARG(1).firstColumn;
+	}
+}
+
+
 int Parser::parseAux()
 {
-  int yym, yyn, yystate, yychar, yynewerrflag;
+  int yyn, yystate, yychar, yynewerrflag;
   yyparsestate *yyerrctx = NULL;
   int reduce_posn;
 
@@ -551,9 +562,6 @@ yyreduce:
   memset(&yyps->pos, 0, sizeof(yyps->pos));
 
   reduce_posn = TRUE;
-
-  yyposn.firstLine = YYPOSNARG(1).firstLine;
-  yyposn.firstColumn = YYPOSNARG(1).firstColumn;
 
   switch (yyn) {
 

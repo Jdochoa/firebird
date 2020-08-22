@@ -44,7 +44,7 @@ SortedStream::SortedStream(CompilerScratch* csb, RecordSource* next, SortMap* ma
 {
 	fb_assert(m_next && m_map);
 
-	m_impure = CMP_impure(csb, sizeof(Impure));
+	m_impure = csb->allocImpure<Impure>();
 }
 
 void SortedStream::open(thread_db* tdbb) const
@@ -83,8 +83,7 @@ void SortedStream::close(thread_db* tdbb) const
 
 bool SortedStream::getRecord(thread_db* tdbb) const
 {
-	if (--tdbb->tdbb_quantum < 0)
-		JRD_reschedule(tdbb, 0, true);
+	JRD_reschedule(tdbb);
 
 	jrd_req* const request = tdbb->getRequest();
 	Impure* const impure = request->getImpure<Impure>(m_impure);

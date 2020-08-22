@@ -3932,8 +3932,7 @@ bool VIO_sweep(thread_db* tdbb, jrd_tra* transaction, TraceSweepEvent* traceSwee
 					if (relation->rel_flags & REL_deleting)
 						break;
 
-					if (--tdbb->tdbb_quantum < 0)
-						JRD_reschedule(tdbb, SWEEP_QUANTUM, true);
+					JRD_reschedule(tdbb);
 
 					transaction->tra_oldest_active = dbb->dbb_oldest_snapshot;
 					if (TipCache* cache = dbb->dbb_tip_cache)
@@ -4705,8 +4704,7 @@ static void garbage_collect(thread_db* tdbb, record_param* rpb, ULONG prior_page
 		++backversions;
 
 		// Don't monopolize the server while chasing long back version chains.
-		if (--tdbb->tdbb_quantum < 0)
-			JRD_reschedule(tdbb, 0, true);
+		JRD_reschedule(tdbb);
 	}
 
 	IDX_garbage_collect(tdbb, rpb, going, staying);
@@ -4783,7 +4781,7 @@ void Database::garbage_collector(Database* dbb)
 		UserId user;
 		user.setUserName("Garbage Collector");
 
-		Jrd::Attachment* const attachment = Jrd::Attachment::create(dbb);
+		Jrd::Attachment* const attachment = Jrd::Attachment::create(dbb, nullptr);
 		RefPtr<SysStableAttachment> sAtt(FB_NEW SysStableAttachment(attachment));
 		attachment->setStable(sAtt);
 		attachment->att_filename = dbb->dbb_filename;
@@ -4791,8 +4789,7 @@ void Database::garbage_collector(Database* dbb)
 		attachment->att_user = &user;
 
 		BackgroundContextHolder tdbb(dbb, attachment, &status_vector, FB_FUNCTION);
-		tdbb->tdbb_quantum = SWEEP_QUANTUM;
-		tdbb->tdbb_flags = TDBB_sweeper;
+		tdbb->markAsSweeper();
 
 		record_param rpb;
 		rpb.getWindow(tdbb).win_flags = WIN_garbage_collector;
@@ -4930,8 +4927,7 @@ void Database::garbage_collector(Database* dbb)
 									break;
 								}
 
-								if (--tdbb->tdbb_quantum < 0)
-									JRD_reschedule(tdbb, SWEEP_QUANTUM, true);
+								JRD_reschedule(tdbb);
 
 								if (rpb.rpb_number >= last)
 									break;
@@ -4963,7 +4959,7 @@ void Database::garbage_collector(Database* dbb)
 
 				if (found)
 				{
-					JRD_reschedule(tdbb, SWEEP_QUANTUM, true);
+					JRD_reschedule(tdbb, true);
 				}
 				else
 				{
@@ -5181,7 +5177,7 @@ static void list_staying_fast(thread_db* tdbb, record_param* rpb, RecordStack& s
 
 	fb_assert(temp.rpb_b_page == rpb->rpb_b_page);
 	fb_assert(temp.rpb_b_line == rpb->rpb_b_line);
-	fb_assert(temp.rpb_flags == rpb->rpb_flags);
+	fb_assert((temp.rpb_flags & ~rpb_incomplete) == (rpb->rpb_flags & ~rpb_incomplete));
 
 	Record* backout_rec = NULL;
 	RuntimeStatistics::Accumulator backversions(tdbb, rpb->rpb_relation,
@@ -5272,8 +5268,7 @@ static void list_staying_fast(thread_db* tdbb, record_param* rpb, RecordStack& s
 		***/
 
 		// Don't monopolize the server while chasing long back version chains.
-		if (--tdbb->tdbb_quantum < 0)
-			JRD_reschedule(tdbb, 0, true);
+		JRD_reschedule(tdbb);
 	}
 
 	delete backout_rec;
@@ -5402,8 +5397,7 @@ static void list_staying(thread_db* tdbb, record_param* rpb, RecordStack& stayin
 			++depth;
 
 			// Don't monopolize the server while chasing long back version chains.
-			if (--tdbb->tdbb_quantum < 0)
-				JRD_reschedule(tdbb, 0, true);
+			JRD_reschedule(tdbb);
 		}
 
 		if (timed_out)
@@ -6221,7 +6215,7 @@ static void set_owner_name(thread_db* tdbb, Record* record, USHORT field_id)
 		const Jrd::UserId* const user = tdbb->getAttachment()->att_user;
 		if (user)
 		{
-			const Firebird::MetaName name(user->getUserName());
+			const MetaName name(user->getUserName());
 			dsc desc2;
 			desc2.makeText((USHORT) name.length(), CS_METADATA, (UCHAR*) name.c_str());
 			MOV_move(tdbb, &desc2, &desc1);
@@ -6248,7 +6242,7 @@ static bool set_security_class(thread_db* tdbb, Record* record, USHORT field_id)
 	if (!EVL_field(0, record, field_id, &desc1))
 	{
 		const SINT64 value = DYN_UTIL_gen_unique_id(tdbb, drq_g_nxt_sec_id, SQL_SECCLASS_GENERATOR);
-		Firebird::MetaName name;
+		MetaName name;
 		name.printf("%s%" SQUADFORMAT, SQL_SECCLASS_PREFIX, value);
 		dsc desc2;
 		desc2.makeText((USHORT) name.length(), CS_ASCII, (UCHAR*) name.c_str());
@@ -6393,9 +6387,7 @@ void VIO_update_in_place(thread_db* tdbb,
 	org_rpb->rpb_flags &= ~rpb_deleted;
 	org_rpb->rpb_flags |= new_rpb->rpb_flags & (rpb_uk_modified|rpb_deleted);
 
-	DEBUG;
 	replace_record(tdbb, org_rpb, stack, transaction);
-	DEBUG;
 
 	org_rpb->rpb_address = save_address;
 	org_rpb->rpb_length = length;

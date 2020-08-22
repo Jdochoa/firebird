@@ -41,7 +41,7 @@
 #include "../common/UtilSvc.h"
 #include "../common/classes/array.h"
 #include "../common/classes/fb_pair.h"
-#include "../common/classes/MetaName.h"
+#include "../common/classes/MetaString.h"
 #include "../common/SimilarToRegex.h"
 #include "../common/status.h"
 #include "../common/sha.h"
@@ -950,6 +950,7 @@ public:
 		  verboseInterval(10000),
 		  flag_on_line(true),
 		  firstMap(true),
+		  firstDbc(true),
 		  stdIoMode(false)
 	{
 		// this is VERY dirty hack to keep current (pre-FB2) behaviour
@@ -1168,7 +1169,7 @@ public:
 	Firebird::FbLocalStatus status_vector;
 	Firebird::ThrowLocalStatus throwStatus;
 
-	Firebird::Array<Firebird::Pair<Firebird::NonPooled<Firebird::MetaName, Firebird::MetaName> > >
+	Firebird::Array<Firebird::Pair<Firebird::NonPooled<Firebird::MetaString, Firebird::MetaString> > >
 		defaultCollations;
 	Firebird::UtilSvc* uSvc;
 	ULONG verboseInterval;	// How many records should be backed up or restored before we show this message

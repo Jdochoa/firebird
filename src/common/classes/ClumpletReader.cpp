@@ -29,7 +29,6 @@
 #include "firebird.h"
 
 #include "../common/classes/ClumpletReader.h"
-#include "../common/classes/MetaName.h"
 #include "fb_exception.h"
 
 #include "ibase.h"
@@ -455,6 +454,14 @@ ClumpletReader::ClumpletType ClumpletReader::getClumpletType(UCHAR tag) const
 			}
 			invalid_structure("unknown parameter for nbackup", tag);
 			break;
+		case isc_action_svc_nfix:
+			switch (tag)
+			{
+			case isc_spb_dbname:
+				return StringSpb;
+			}
+			invalid_structure("unknown parameter for nbackup", tag);
+			break;
 		case isc_action_svc_trace_start:
 		case isc_action_svc_trace_stop:
 		case isc_action_svc_trace_suspend:
@@ -856,14 +863,6 @@ string& ClumpletReader::getString(string& str) const
 	{
 		invalid_structure("string length doesn't match with clumplet", str.length() + 1);
 	}
-	return str;
-}
-
-MetaName& ClumpletReader::getString(MetaName& str) const
-{
-	const UCHAR* ptr = getBytes();
-	const FB_SIZE_T length = getClumpLength();
-	str.assign(reinterpret_cast<const char*>(ptr), length);
 	return str;
 }
 

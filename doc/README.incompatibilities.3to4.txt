@@ -54,3 +54,20 @@ Non-constant date/time/timestamp literals
 	"select timestamp 'now' from rdb$database" will give stalled results.
 
 	These strings will not be accepted with the literals syntax anymore.
+
+
+Start value of sequences
+------------------------
+
+  * Before v4 sequences were created with its current value set to its start value (or the default zero).
+
+    Then a sequence with a start value of 0 and increment 1 started at 1. This example has the same
+	result in v4 but internals are different, and that makes others cases different.
+
+	In v4 sequences are created (or restarted) with its current value set to its start value minus
+	its increment. And the default start value is changed to 1.
+
+	Then a sequence with start value 100 and increment 10 has its first NEXT VALUE equal to 100 in v4,
+	while it was 110 before.
+
+	Likewise this sequence has its first GEN_ID(SEQ, 1) equal 91 in v4, while it was 101 before.

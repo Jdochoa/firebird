@@ -939,7 +939,7 @@ void NBackup::attach_database()
 		status_exception::raise(Arg::Gds(isc_nbackup_userpw_toolong));
 	}
 
-	ClumpletWriter dpb(ClumpletReader::Tagged, MAX_DPB_SIZE, isc_dpb_version1);
+	ClumpletWriter dpb(ClumpletReader::dpbList, MAX_DPB_SIZE);
 
 	const unsigned char* authBlock;
 	unsigned int authBlockSize = uSvc->getAuthBlock(&authBlock);

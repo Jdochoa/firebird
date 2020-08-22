@@ -509,10 +509,9 @@ CorrectLibDir() {
 # Validate library name
 
 checkLibName() {
-	libName=${1}
 	grepFlag=-v
 	[ "@CPU_TYPE@" = "amd64" ] && grepFlag=
-	ldconfig -p | grep -w "$libName" | grep $grepFlag 'x86-64'
+	ldconfig -p | grep -w "${1}" | grep $grepFlag 'x86-64'
 }
 
 
@@ -527,8 +526,7 @@ haveLibrary() {
 
 	checkLibName "$libName" >/dev/null 2>/dev/null && return 0
 
-	libName="lib${libName}"
-	checkLibName "$libName" >/dev/null 2>/dev/null
+	checkLibName "lib$libName" >/dev/null 2>/dev/null
 
 	return $?
 }

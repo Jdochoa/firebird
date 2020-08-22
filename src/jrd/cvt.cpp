@@ -174,6 +174,13 @@ void CVT_double_to_date(double real, SLONG fixed[2])
 }
 
 
+static void error_swallow(const Arg::StatusVector& v)
+{
+	thread_db* tdbb = JRD_get_thread_data();
+	v.copyTo(tdbb->tdbb_status_vector);
+}
+
+
 UCHAR CVT_get_numeric(const UCHAR* string, const USHORT length, SSHORT* scale, void* ptr)
 {
 /**************************************
@@ -277,6 +284,16 @@ UCHAR CVT_get_numeric(const UCHAR* string, const USHORT length, SSHORT* scale, v
 	if (over)
 	{
 		thread_db* tdbb = JRD_get_thread_data();
+
+		tdbb->tdbb_status_vector->init();
+		*scale = CVT_decompose(reinterpret_cast<const char*>(string), length, (Int128*) ptr, error_swallow);
+		if (*scale >= MIN_SCHAR && *scale <= MAX_SCHAR &&
+			(!(tdbb->tdbb_status_vector->getState() & IStatus::STATE_ERRORS)))
+		{
+			return dtype_int128;
+		}
+		tdbb->tdbb_status_vector->init();
+
 		*(Decimal128*) ptr = CVT_get_dec128(&desc, tdbb->getAttachment()->att_dec_status, ERR_post);
 		return dtype_dec128;
 	}

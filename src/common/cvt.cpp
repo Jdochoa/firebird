@@ -51,7 +51,7 @@
 #include "../common/classes/timestamp.h"
 #include "../common/cvt.h"
 #include "../jrd/intl.h"
-#include "../jrd/val.h"
+#include "../jrd/constants.h"
 #include "../common/classes/VaryStr.h"
 #include "../common/classes/FpeControl.h"
 #include "../common/dsc_proto.h"
@@ -1586,17 +1586,16 @@ void CVT_move_common(const dsc* from, dsc* to, DecimalStatus decSt, Callbacks* c
 		break;
 
 	case dtype_ex_timestamp_tz:
-		d.makeTimestampTz((ISC_TIMESTAMP_TZ*)(to->dsc_address));
+		d.makeTimestampTz((ISC_TIMESTAMP_TZ*) to->dsc_address);
 		CVT_move_common(from, &d, decSt, cb);
-		TimeZoneUtil::extractOffset(*(ISC_TIMESTAMP_TZ*)(to->dsc_address),
-			&((ISC_TIMESTAMP_TZ_EX*)(to->dsc_address))->ext_offset);
+		TimeZoneUtil::extractOffset(*(ISC_TIMESTAMP_TZ*) to->dsc_address,
+			&((ISC_TIMESTAMP_TZ_EX*) to->dsc_address)->ext_offset);
 		return;
 
 	case dtype_ex_time_tz:
-		d.makeTimeTz((ISC_TIME_TZ*)(to->dsc_address));
+		d.makeTimeTz((ISC_TIME_TZ*) to->dsc_address);
 		CVT_move_common(from, &d, decSt, cb);
-		TimeZoneUtil::extractOffset(TimeZoneUtil::timeTzToTimeStampTz(*(ISC_TIME_TZ*)(to->dsc_address), cb),
-			&((ISC_TIME_TZ_EX*)(to->dsc_address))->ext_offset);
+		TimeZoneUtil::extractOffset(*(ISC_TIME_TZ*) to->dsc_address, &((ISC_TIME_TZ_EX*) to->dsc_address)->ext_offset);
 		return;
 
 	case dtype_timestamp_tz:
@@ -1838,7 +1837,6 @@ void CVT_move_common(const dsc* from, dsc* to, DecimalStatus decSt, Callbacks* c
 				} // end scope
 
 				const USHORT to_size = TEXT_LEN(to);
-				const UCHAR* start = to->dsc_address;
 				UCHAR fill_char = ASCII_SPACE;
 				Jrd::CharSet* toCharset = cb->getToCharset(charset2);
 
@@ -1896,7 +1894,7 @@ void CVT_move_common(const dsc* from, dsc* to, DecimalStatus decSt, Callbacks* c
 						// TMN: Here we should really have the following fb_assert
 						// fb_assert(length <= MAX_USHORT);
 						((vary*) p)->vary_length = (USHORT) toLength;
-						start = p = reinterpret_cast<UCHAR*>(((vary*) p)->vary_string);
+						p = reinterpret_cast<UCHAR*>(((vary*) p)->vary_string);
 						CVT_COPY_BUFF(q, p, toLength);
 					}
 					else
@@ -2544,13 +2542,19 @@ static SSHORT cvt_decompose(const char*	string,
 			q++;
 
 		if (q != end || end - p == 0 || (end - p) * 4 > return_value->maxSize() * 8)
+		{
 			CVT_conversion_error(&errd, err);
+			return 0;
+		}
 
 		q = p;
 		hex_to_value(q, digits_end, return_value);
 
 		if (q != digits_end)
+		{
 			CVT_conversion_error(&errd, err);
+			return 0;
+		}
 
 		// 0xFFFFFFFF = -1; 0x0FFFFFFFF = 4294967295
 		if (digits_end - p <= 8)
@@ -2587,11 +2591,12 @@ static SSHORT cvt_decompose(const char*	string,
 						continue;
 				}
 				err(Arg::Gds(isc_arith_except) << Arg::Gds(isc_numeric_out_of_range));
-				break;
+				return 0;
 			case RetPtr::RETVAL_POSSIBLE_OVERFLOW:
 				if ((*p > '8' && sign == -1) || (*p > '7' && sign != -1))
 				{
 					err(Arg::Gds(isc_arith_except) << Arg::Gds(isc_numeric_out_of_range));
+					return 0;
 				}
 				break;
 			default:
@@ -2605,9 +2610,11 @@ static SSHORT cvt_decompose(const char*	string,
 		else if (*p == '.')
 		{
 			if (fraction)
+			{
 				CVT_conversion_error(&errd, err);
-			else
-				fraction = true;
+				return 0;
+			}
+			fraction = true;
 		}
 		else if (*p == '-' && !digit_seen && !sign && !fraction)
 			sign = -1;
@@ -2623,14 +2630,23 @@ static SSHORT cvt_decompose(const char*	string,
 
 			// throw if there is something after the spaces
 			if (p < end)
+			{
 				CVT_conversion_error(&errd, err);
+				return 0;
+			}
 		}
 		else
+		{
 			CVT_conversion_error(&errd, err);
+			return 0;
+		}
 	}
 
 	if (!digit_seen)
+	{
 		CVT_conversion_error(&errd, err);
+		return 0;
+	}
 
 	if ((sign == -1) && !return_value->isLowerLimit())
 		return_value->neg();
@@ -2654,7 +2670,10 @@ static SSHORT cvt_decompose(const char*	string,
 				// applied to the value.
 
 				if (exp >= SHORT_LIMIT)
+				{
 					err(Arg::Gds(isc_arith_except) << Arg::Gds(isc_numeric_out_of_range));
+					return 0;
+				}
 			}
 			else if (*p == '-' && !digit_seen && !sign)
 				sign = -1;
@@ -2668,10 +2687,16 @@ static SSHORT cvt_decompose(const char*	string,
 
 				// throw if there is something after the spaces
 				if (p < end)
+				{
 					CVT_conversion_error(&errd, err);
+					return 0;
+				}
 			}
 			else
+			{
 				CVT_conversion_error(&errd, err);
+				return 0;
+			}
 		}
 		if (sign == -1)
 			scale -= exp;
@@ -2679,7 +2704,10 @@ static SSHORT cvt_decompose(const char*	string,
 			scale += exp;
 
 		if (!digit_seen)
+		{
 			CVT_conversion_error(&errd, err);
+			return 0;
+		}
 	}
 
 	return scale;
@@ -3536,7 +3564,7 @@ static void hex_to_value(const char*& string, const char* end, RetPtr* retValue)
 	int nibble = ((end - string) & 1);
 	char ch;
 
-	while ((DIGIT((ch = UPPER(*string)))) || ((ch >= 'A') && (ch <= 'F')))
+	while ((string < end) && ((DIGIT((ch = UPPER(*string)))) || ((ch >= 'A') && (ch <= 'F'))))
 	{
 		// Now convert the character to a nibble
 		SSHORT c;

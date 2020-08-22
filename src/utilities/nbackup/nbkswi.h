@@ -65,7 +65,7 @@ static const struct Switches::in_sw_tab_t nbackup_action_in_sw_table [] =
 	{IN_SW_NBK_LOCK,		0,						"LOCK",				0, 0, 0, false, false,	8,	1,	NULL, nboExclusive},
 	{IN_SW_NBK_UNLOCK,		0,						"N",				0, 0, 0, false, false,	0,	1,	NULL, nboExclusive},
 	{IN_SW_NBK_UNLOCK,		0,						"UNLOCK",			0, 0, 0, false, false,	9,	2,	NULL, nboExclusive},
-	{IN_SW_NBK_FIXUP,		0,						"FIXUP",			0, 0, 0, false, false,	10,	1,	NULL, nboExclusive},
+	{IN_SW_NBK_FIXUP,		isc_action_svc_nfix,	"FIXUP",			0, 0, 0, false, false,	10,	1,	NULL, nboExclusive},
 	{IN_SW_NBK_BACKUP,		isc_action_svc_nbak,	"BACKUP",			0, 0, 0, false, false,	11,	1,	NULL, nboExclusive},
 	{IN_SW_NBK_RESTORE,		isc_action_svc_nrest,	"RESTORE",			0, 0, 0, false, false,	12,	1,	NULL, nboExclusive},
 	{IN_SW_NBK_DIRECT,		0,						"DIRECT",			0, 0, 0, false, false, 70,	1,	NULL, nboSpecial},

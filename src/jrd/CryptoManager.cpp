@@ -300,7 +300,7 @@ namespace Jrd {
 
 	void CryptoManager::shutdown(thread_db* tdbb)
 	{
-		terminateCryptThread(tdbb);
+		terminateCryptThread(tdbb, false);
 
 		if (cryptPlugin)
 		{
@@ -828,7 +828,7 @@ namespace Jrd {
 	void CryptoManager::stopThreadUsing(thread_db* tdbb, Attachment* att)
 	{
 		if (att == cryptAtt)
-			terminateCryptThread(tdbb);
+			terminateCryptThread(tdbb, false);
 	}
 
 	void CryptoManager::startCryptThread(thread_db* tdbb)
@@ -856,10 +856,6 @@ namespace Jrd {
 		bool releasingLock = false;
 		try
 		{
-			// Cleanup resources
-			terminateCryptThread(tdbb);
-			down = false;
-
 			// Determine current page from the header
 			CchHdr hdr(tdbb, LCK_read);
 			process = hdr->hdr_flags & Ods::hdr_crypt_process ? true : false;
@@ -922,7 +918,7 @@ namespace Jrd {
 			UserId user;
 			user.setUserName("Database Crypter");
 
-			Jrd::Attachment* const attachment = Jrd::Attachment::create(&dbb);
+			Jrd::Attachment* const attachment = Jrd::Attachment::create(&dbb, nullptr);
 			RefPtr<SysStableAttachment> sAtt(FB_NEW SysStableAttachment(attachment));
 			attachment->setStable(sAtt);
 			attachment->att_filename = dbb.dbb_filename;
@@ -955,7 +951,7 @@ namespace Jrd {
 
 				// Establish context
 				// Need real attachment in order to make classic mode happy
-				ClumpletWriter writer(ClumpletReader::Tagged, MAX_DPB_SIZE, isc_dpb_version1);
+				ClumpletWriter writer(ClumpletReader::dpbList, MAX_DPB_SIZE);
 				writer.insertString(isc_dpb_user_name, DBA_USER_NAME);
 				writer.insertByte(isc_dpb_no_db_triggers, TRUE);
 
@@ -981,7 +977,7 @@ namespace Jrd {
 					releaseGuard.leave();
 
 					ThreadContextHolder tdbb(att->att_database, att, &status_vector);
-					tdbb->tdbb_quantum = SWEEP_QUANTUM;
+					tdbb->markAsSweeper();
 
 					DatabaseContextHolder dbHolder(tdbb);
 
@@ -1018,10 +1014,7 @@ namespace Jrd {
 							}
 
 							// scheduling
-							if (--tdbb->tdbb_quantum < 0)
-							{
-								JRD_reschedule(tdbb, SWEEP_QUANTUM, true);
-							}
+							JRD_reschedule(tdbb);
 
 							// nbackup state check
 							int bak_state = Ods::hdr_nbak_unknown;

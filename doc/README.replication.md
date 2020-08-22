@@ -51,7 +51,7 @@ Tables enabled for replicated can be additionally filtered using two settings in
 
 Synchronous replication can be turned on using the sync\_replica setting \(multiple entries are allowed\). It must specify a connection string to the replica database, prefixed with username/password. In SuperServer and SuperClassic architectures, replica database is being internally attached when the first user gets connected to the master database and detached when the last user disconnects from the master database. In Classic Server architecture, every server process keeps an active connection to the replica database.
 
-Asynchronous replication requires setting up the journalling mechanism.The primary parameter is log\_directory which defines location of the replication journal. Once this location is specified, asynchronous replication is turned on and Firebird server starts producing the journal segments.
+Asynchronous replication requires setting up the journalling mechanism. The primary parameter is log\_directory which defines location of the replication journal. Once this location is specified, asynchronous replication is turned on and Firebird server starts producing the journal segments.
 
 Minimal configuration looks like this:
 
@@ -61,7 +61,7 @@ database = /data/mydb.fdb
     log\_archive\_directory = /shiplogs/mydb/  
 }
 
-Archiving is performed by copying the segments from /dblogs/mydb/ to /shiplogs/mydb/, Firebird server copies the segments  itself.
+Archiving is performed by copying the segments from /dblogs/mydb/ to /shiplogs/mydb/, Firebird server copies the segments itself.
 
 The same with user-defined archiving:
 

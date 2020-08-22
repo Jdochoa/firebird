@@ -282,17 +282,10 @@ namespace
 		{
 			auto p = buffer;
 
-			while (length)
+			if (length && !(m_blob->blb_flags & BLB_eof))
 			{
-				auto n = (USHORT) MIN(length, MAX_SSHORT);
-
-				n = m_blob->BLB_get_segment(m_tdbb, p, n);
-
-				p += n;
-				length -= n;
-
-				if (m_blob->blb_flags & BLB_eof)
-					break;
+				const auto n = (USHORT) MIN(length, MAX_USHORT);
+				p += m_blob->BLB_get_segment(m_tdbb, p, n);
 			}
 
 			return (unsigned) (p - buffer);

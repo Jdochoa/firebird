@@ -212,3 +212,4 @@
 	FIELD(fld_remote_crypt	, nam_wire_crypt_plugin, dtype_varying, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true)
 
 	FIELD(fld_pub_name		, nam_pub_name		, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, false)
+	FIELD(fld_file_id		, nam_file_id		, dtype_varying	, 255						, dsc_text_type_ascii		, NULL		, false)

@@ -219,19 +219,22 @@ checkLibrary() {
 #------------------------------------------------------------------------
 # Make sure we have required libraries installed
 checkLibraries() {
-	if [ "@TOMMATH_BUILD@" != "Y" ]
+	if [ "@TOMMATH_BUILD@" != "Y" -o "${fb_install_prefix}" != "${default_prefix}" ]
 	then
 		fixTommath=
 		checkLibrary tommath
 		haveLibrary libtommath.so.0 || [ "$fixTommath" ] && $fixTommath
 	fi
 
-	if [ "@TOMCRYPT_BUILD@" != "Y" ]
+	if [ "@TOMCRYPT_BUILD@" != "Y" -o "${fb_install_prefix}" != "${default_prefix}" ]
 	then
-		checkLibrary tomcrypt
+		[ -z "$LIBTOMCRYPT" ] && LIBTOMCRYPT=tomcrypt
+		checkLibrary $LIBTOMCRYPT
 	fi
 
 	checkLibrary icudata
+
+	[ "$LIBCURSES" ] && checkLibrary $LIBCURSES
 }
 
 

@@ -1,4 +1,4 @@
-/*
+ /*
  *  The contents of this file are subject to the Initial
  *  Developer's Public License Version 1.0 (the "License");
  *  you may not use this file except in compliance with the
@@ -25,6 +25,7 @@
 #define JRD_REPLICATION_REPLICATOR_H
 
 #include "../common/classes/timestamp.h"
+#include "../common/classes/MetaString.h"
 #include "../common/os/guid.h"
 #include "../jrd/align.h"
 #include "../jrd/status.h"
@@ -38,7 +39,7 @@ namespace Replication
 		public Firebird::AutoIface<Firebird::IReplicatedSessionImpl<Replicator, Firebird::CheckStatusWrapper> >,
 		private Firebird::PermanentStorage
 	{
-		typedef Firebird::Array<Firebird::MetaName> MetadataCache;
+		typedef Firebird::Array<Firebird::MetaString> MetadataCache;
 		typedef Firebird::HalfStaticArray<SavNumber, 16> SavepointStack;
 
 		struct BatchBlock
@@ -82,7 +83,7 @@ namespace Replication
 				buffer->add(ptr, sizeof(SINT64));
 			}
 
-			void putMetaName(const Firebird::MetaName& name)
+			void putMetaName(const Firebird::MetaString& name)
 			{
 				if (lastMetaId < metadata.getCount() && metadata[lastMetaId] == name)
 				{
@@ -204,7 +205,7 @@ namespace Replication
 
 		struct GeneratorValue
 		{
-			Firebird::MetaName name;
+			Jrd::MetaName name;
 			SINT64 value;
 		};
 
@@ -221,7 +222,7 @@ namespace Replication
 		Replicator(Firebird::MemoryPool& pool,
 				   Manager* manager,
 				   const Firebird::Guid& dbGuid,
-				   const Firebird::MetaName& userName,
+				   const Firebird::MetaString& userName,
 				   bool cleanupTransactions);
 
 		// IDisposable methods
@@ -242,7 +243,7 @@ namespace Replication
 		Manager* const m_manager;
 		const Config* const m_config;
 		Firebird::Guid m_guid;
-		const Firebird::MetaName m_user;
+		const Firebird::MetaString m_user;
 		Firebird::Array<Transaction*> m_transactions;
 		GeneratorCache m_generators;
 		Firebird::Mutex m_mutex;

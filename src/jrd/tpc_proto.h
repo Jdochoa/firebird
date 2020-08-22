@@ -139,6 +139,8 @@ public:
 	StmtNumber generateStatementId();
 	//void assignLatestTransactionId(TraNumber number);
 	void assignLatestAttachmentId(AttNumber number);
+	AttNumber getLatestAttachmentId() const;
+	StmtNumber getLatestStatementId() const;
 
 	CommitNumber getGlobalCommitNumber() const
 	{

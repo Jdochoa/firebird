@@ -118,10 +118,10 @@ namespace
 			return *ptr;
 		}
 
-		const MetaName& getMetaName()
+		const MetaString& getMetaName()
 		{
-			const auto offset = getInt() * sizeof(MetaName);
-			const auto metaPtr = (const MetaName*) (m_metadata + offset);
+			const auto offset = getInt() * sizeof(MetaString);
+			const auto metaPtr = (const MetaString*) (m_metadata + offset);
 			return *metaPtr;
 		}
 
@@ -206,21 +206,13 @@ Applier* Applier::create(thread_db* tdbb)
 
 void Applier::shutdown(thread_db* tdbb)
 {
-	TransactionMap::Accessor txnAccessor(&m_txnMap);
-	if (txnAccessor.getFirst())
-	{
-		do {
-			const auto transaction = txnAccessor.current()->second;
-			TRA_rollback(tdbb, transaction, false, true);
-		} while (txnAccessor.getNext());
-	}
+	cleanupTransactions(tdbb);
 
 	CMP_release(tdbb, m_request);
 	m_request = NULL;
 	m_record = NULL;
 
 	m_bitmap->clear();
-	m_txnMap.clear();
 }
 
 void Applier::process(thread_db* tdbb, ULONG length, const UCHAR* data)
@@ -265,7 +257,10 @@ void Applier::process(thread_db* tdbb, ULONG length, const UCHAR* data)
 				break;
 
 			case opCleanupTransaction:
-				rollbackTransaction(tdbb, traNum, true);
+				if (traNum)
+					rollbackTransaction(tdbb, traNum, true);
+				else
+					cleanupTransactions(tdbb);
 				break;
 
 			case opStartSavepoint:
@@ -316,9 +311,12 @@ void Applier::process(thread_db* tdbb, ULONG length, const UCHAR* data)
 					bid blob_id;
 					blob_id.bid_quad.bid_quad_high = reader.getInt();
 					blob_id.bid_quad.bid_quad_low = reader.getInt();
-					const UCHAR* blob = NULL;
-					const ULONG length = reader.getBinary(blob);
-					storeBlob(tdbb, traNum, &blob_id, length, blob);
+					ULONG length = 0;
+					do {
+						const UCHAR* blob = NULL;
+						length = reader.getBinary(blob);
+						storeBlob(tdbb, traNum, &blob_id, length, blob);
+					} while (length && !reader.isEof());
 				}
 				break;
 
@@ -346,7 +344,7 @@ void Applier::process(thread_db* tdbb, ULONG length, const UCHAR* data)
 			}
 
 			// Check cancellation flags and reset monitoring state if necessary
-			tdbb->checkCancelState(true);
+			tdbb->checkCancelState();
 			Monitoring::checkState(tdbb);
 		}
 
@@ -411,6 +409,20 @@ void Applier::rollbackTransaction(thread_db* tdbb, TraNumber traNum, bool cleanu
 	TRA_rollback(tdbb, transaction, false, true);
 
 	m_txnMap.remove(traNum);
+}
+
+void Applier::cleanupTransactions(thread_db* tdbb)
+{
+	TransactionMap::Accessor txnAccessor(&m_txnMap);
+	if (txnAccessor.getFirst())
+	{
+		do {
+			const auto transaction = txnAccessor.current()->second;
+			TRA_rollback(tdbb, transaction, false, true);
+		} while (txnAccessor.getNext());
+	}
+
+	m_txnMap.clear();
 }
 
 void Applier::startSavepoint(thread_db* tdbb, TraNumber traNum)
@@ -756,11 +768,33 @@ void Applier::storeBlob(thread_db* tdbb, TraNumber traNum, bid* blobId,
 
 	const auto orgBlobId = blobId->get_permanent_number().getValue();
 
-	const auto blob = blb::create(tdbb, transaction, blobId);
-	blob->BLB_put_data(tdbb, data, length);
-	blob->BLB_close(tdbb);
+	blb* blob = NULL;
 
-	transaction->tra_repl_blobs.put(orgBlobId, blobId->bid_temp_id());
+	ReplBlobMap::Accessor accessor(&transaction->tra_repl_blobs);
+	if (accessor.locate(orgBlobId))
+	{
+		const auto tempBlobId = accessor.current()->second;
+
+		if (transaction->tra_blobs->locate(tempBlobId))
+		{
+			const auto current = &transaction->tra_blobs->current();
+			fb_assert(!current->bli_materialized);
+			blob = current->bli_blob_object;
+		}
+	}
+	else
+	{
+		bid newBlobId;
+		blob = blb::create(tdbb, transaction, &newBlobId);
+		transaction->tra_repl_blobs.put(orgBlobId, newBlobId.bid_temp_id());
+	}
+
+	fb_assert(blob);
+
+	if (length)
+		blob->BLB_put_segment(tdbb, data, length);
+	else
+		blob->BLB_close(tdbb);
 }
 
 void Applier::executeSql(thread_db* tdbb,

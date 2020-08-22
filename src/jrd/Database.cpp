@@ -40,6 +40,7 @@
 #include "../jrd/CryptoManager.h"
 #include "../jrd/os/pio_proto.h"
 #include "../common/os/os_utils.h"
+//#include "../dsql/Parser.h"
 
 // Thread data block
 #include "../common/ThreadData.h"
@@ -85,6 +86,20 @@ namespace Jrd
 		if (!dbb_tip_cache)
 			return 0;
 		return dbb_tip_cache->generateStatementId();
+	}
+
+	AttNumber Database::getLatestAttachmentId() const
+	{
+		if (!dbb_tip_cache)
+			return 0;
+		return dbb_tip_cache->getLatestAttachmentId();
+	}
+
+	StmtNumber Database::getLatestStatementId() const
+	{
+		if (!dbb_tip_cache)
+			return 0;
+		return dbb_tip_cache->getLatestStatementId();
 	}
 
 	const Firebird::string& Database::getUniqueFileId()

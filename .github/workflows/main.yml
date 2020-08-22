@@ -9,15 +9,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Build is segfaulting in Ubuntu.
-        #os: [macOS-latest, windows-2016, ubuntu-16.04]
-        os: [macOS-latest, windows-2016]
+        os: [macOS-latest, windows-2016, ubuntu-20.04]
         platform: [x64, x86]
         exclude:
           - os: macOS-latest
             platform: x86
-        #  - os: ubuntu-16.04
-        #    platform: x86
+          - os: ubuntu-20.04
+            platform: x86
 
     steps:
     - uses: actions/checkout@v1
@@ -25,15 +23,15 @@ jobs:
         fetch-depth: 10
 
     - name: Prepare (Linux)
-      if: matrix.os == 'ubuntu-16.04'
+      if: matrix.os == 'ubuntu-20.04'
       run: |
-        sudo apt-get install libtool-bin libtommath0 libtommath-dev libicu-dev zlib1g-dev
+        sudo apt-get install libtool-bin libtomcrypt1 libtomcrypt-dev libtommath1 libtommath-dev libicu-dev zlib1g-dev
 
     - name: Build (Linux)
-      if: matrix.os == 'ubuntu-16.04'
+      if: matrix.os == 'ubuntu-20.04'
       run: |
-        CC=clang CXX=clang++ ./autogen.sh --enable-binreloc --with-builtin-tomcrypt --prefix=/opt/firebird
-        make
+        CC=clang CXX=clang++ ./autogen.sh --enable-binreloc --prefix=/opt/firebird
+        make -j4
         make dist
         tar xzvf gen/Firebird-[0-9]*.tar.gz
         (cd Firebird-[0-9]*; sudo ./install.sh -silent)
@@ -121,29 +119,29 @@ jobs:
         run_all.bat JUSTBUILD
 
     - name: Upload (Linux)
-      if: matrix.os == 'ubuntu-16.04'
-      uses: actions/upload-artifact@master
+      if: matrix.os == 'ubuntu-20.04'
+      uses: actions/upload-artifact@main
       with:
-        name: firebird-linux
+        name: firebird-linux-${{ matrix.platform }}
         path: gen/Firebird-[0-9]*.tar.gz
 
     - name: Upload (MacOS)
       if: matrix.os == 'macOS-latest'
-      uses: actions/upload-artifact@master
+      uses: actions/upload-artifact@main
       with:
         name: firebird-macos
         path: gen/artifacts
 
     - name: Upload (Windows x64)
       if: matrix.os == 'windows-2016' && matrix.platform == 'x64'
-      uses: actions/upload-artifact@master
+      uses: actions/upload-artifact@main
       with:
         name: firebird-windows-x64
         path: output_x64
 
     - name: Upload (Windows x86)
       if: matrix.os == 'windows-2016' && matrix.platform == 'x86'
-      uses: actions/upload-artifact@master
+      uses: actions/upload-artifact@main
       with:
         name: firebird-windows-x86
         path: output_win32

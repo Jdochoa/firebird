@@ -175,11 +175,11 @@ static void splitDataSourceName(thread_db* tdbb, const string& dataSource,
 static bool isCurrentAccount(UserId* currUserID,
 	const MetaName& user, const string& pwd, const MetaName& role)
 {
-	const MetaName& attUser = currUserID->getUserName();
-	const MetaName& attRole = currUserID->getSqlRole();
+	const MetaString& attUser = currUserID->getUserName();
+	const MetaString& attRole = currUserID->getSqlRole();
 
-	return ((user.isEmpty() || user == attUser) && pwd.isEmpty() &&
-			(role.isEmpty() || role == attRole));
+	return ((user.isEmpty() || user == attUser.c_str()) && pwd.isEmpty() &&
+			(role.isEmpty() || role == attRole.c_str()));
 }
 
 Connection* Manager::getConnection(thread_db* tdbb, const string& dataSource,
@@ -456,17 +456,15 @@ void Provider::releaseConnection(thread_db* tdbb, Connection& conn, bool inPool)
 
 	if (!inPool || !connPool || !conn.isConnected() || !conn.resetSession())
 	{
-		if (connPool)
-		{
-			{	// scope
-				MutexLockGuard guard(m_mutex, FB_FUNCTION);
-				AttToConnMap::Accessor acc(&m_connections);
-				if (acc.locate(AttToConn(NULL, &conn)))
-					acc.fastRemove();
-			}
-
-			connPool->delConnection(tdbb, &conn, false);
+		{	// scope
+			MutexLockGuard guard(m_mutex, FB_FUNCTION);
+			AttToConnMap::Accessor acc(&m_connections);
+			if (acc.locate(AttToConn(NULL, &conn)))
+				acc.fastRemove();
 		}
+
+		if (connPool)
+			connPool->delConnection(tdbb, &conn, false);
 
 		Connection::deleteConnection(tdbb, &conn);
 	}
@@ -526,7 +524,7 @@ Connection::Connection(Provider& prov) :
 	m_sqlDialect(0),
 	m_wrapErrors(true),
 	m_broken(false),
-	m_features(0)
+	m_features{}
 {
 }
 
@@ -641,7 +639,7 @@ void Connection::releaseStatement(Jrd::thread_db* tdbb, Statement* stmt)
 {
 	fb_assert(stmt && !stmt->isActive());
 
-	if (stmt->isAllocated() && m_free_stmts < MAX_CACHED_STMTS)
+	if (stmt->isAllocated() && testFeature(fb_feature_statement_long_life) && m_free_stmts < MAX_CACHED_STMTS)
 	{
 		stmt->m_nextFree = m_freeStatements;
 		m_freeStatements = stmt;
@@ -833,7 +831,7 @@ void ConnectionsPool::removeFromPool(Data* item, FB_SIZE_T pos)
 
 	if (item->m_lastUsed != 0)
 	{
-		if (pos == -1)
+		if (pos == (FB_SIZE_T) -1)
 			m_idleArray.find(*item, pos);
 
 		fb_assert(m_idleArray[pos] == item);
@@ -1357,8 +1355,8 @@ int ConnectionsPool::Data::verify(ConnectionsPool* connPool, bool active)
 
 bool ConnectionsPool::verifyPool()
 {
-	int cntIdle = 0, cntActive = 0;
-	int errs = 0;
+	unsigned cntIdle = 0, cntActive = 0;
+	unsigned errs = 0;
 
 	Data* item = m_idleList;
 	if (item)
@@ -1536,7 +1534,7 @@ void Transaction::start(thread_db* tdbb, TraScope traScope, TraModes traMode,
 	{
 	case traCommon:
 		this->m_nextTran = tran->tra_ext_common;
-		this->m_jrdTran = tran;
+		this->m_jrdTran = tran->getInterface(true);
 		tran->tra_ext_common = this;
 		break;
 
@@ -1638,23 +1636,24 @@ void Transaction::detachFromJrdTran()
 	if (m_scope != traCommon)
 		return;
 
-	fb_assert(m_jrdTran || m_connection.isBroken());
 	if (!m_jrdTran)
 		return;
 
-	Transaction** tran_ptr = &m_jrdTran->tra_ext_common;
-	m_jrdTran = NULL;
-	for (; *tran_ptr; tran_ptr = &(*tran_ptr)->m_nextTran)
+	jrd_tra* transaction = m_jrdTran->getHandle();
+	if (transaction)
 	{
-		if (*tran_ptr == this)
+		Transaction** tran_ptr = &transaction->tra_ext_common;
+		for (; *tran_ptr; tran_ptr = &(*tran_ptr)->m_nextTran)
 		{
-			*tran_ptr = this->m_nextTran;
-			this->m_nextTran = NULL;
-			return;
+			if (*tran_ptr == this)
+			{
+				*tran_ptr = this->m_nextTran;
+				this->m_nextTran = NULL;
+				break;
+			}
 		}
 	}
-
-	fb_assert(false);
+	m_jrdTran = NULL;
 }
 
 void Transaction::jrdTransactionEnd(thread_db* tdbb, jrd_tra* transaction,
@@ -1754,7 +1753,7 @@ void Statement::prepare(thread_db* tdbb, Transaction* tran, const string& sql, b
 	string sql2(getPool());
 	const string* readySql = &sql;
 
-	if (named && !(m_provider.getFlags() & prvNamedParams))
+	if (named && !m_connection.testFeature(fb_feature_named_parameters))
 	{
 		preprocess(sql, sql2);
 		readySql = &sql2;
@@ -1773,7 +1772,7 @@ void Statement::setTimeout(thread_db* tdbb, unsigned int timeout)
 }
 
 void Statement::execute(thread_db* tdbb, Transaction* tran,
-	const MetaName* const* in_names, const ValueListNode* in_params, const ParamNumbers* in_excess, 
+	const MetaName* const* in_names, const ValueListNode* in_params, const ParamNumbers* in_excess,
 	const ValueListNode* out_params)
 {
 	fb_assert(isAllocated() && !m_stmt_selectable);
@@ -1788,7 +1787,7 @@ void Statement::execute(thread_db* tdbb, Transaction* tran,
 }
 
 void Statement::open(thread_db* tdbb, Transaction* tran,
-	const MetaName* const* in_names, const ValueListNode* in_params, const ParamNumbers* in_excess, 
+	const MetaName* const* in_names, const ValueListNode* in_params, const ParamNumbers* in_excess,
 	bool singleton)
 {
 	fb_assert(isAllocated() && m_stmt_selectable);

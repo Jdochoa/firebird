@@ -215,6 +215,10 @@ void ConfigStorage::checkAudit()
 	if (m_sharedMemory->getHeader()->change_number != 0)
 		return;
 
+	// Prevent second attempt to create audit session if first one was failed.
+	// This also prevents multiply logging of the same error.
+	setDirty();
+
 	// put default (audit) trace file contents into storage
 	AutoPtr<FILE> cfgFile;
 
@@ -254,8 +258,10 @@ void ConfigStorage::checkAudit()
 			}
 			p[len] = 0;
 		}
-		else {
+		else 
+		{
 			gds__log("Audit configuration file \"%s\" is empty", configFileName.c_str());
+			return;
 		}
 
 		session.ses_user = DBA_USER_NAME;
@@ -695,11 +701,15 @@ void ConfigStorage::addSession(TraceSession& session)
 	if (session.ses_auth.hasData()) {
 		writer.write(tagAuthBlock, session.ses_auth.getCount(), session.ses_auth.begin());
 	}
-	writer.write(tagUserName, session.ses_user.length(), session.ses_user.c_str());
+	if (!session.ses_user.empty()) {
+		writer.write(tagUserName, session.ses_user.length(), session.ses_user.c_str());
+	}
 	if (session.ses_role.hasData()) {
 		writer.write(tagRole, session.ses_role.length(), session.ses_role.c_str());
 	}
-	writer.write(tagConfig, session.ses_config.length(), session.ses_config.c_str());
+	if (!session.ses_config.empty()) {
+		writer.write(tagConfig, session.ses_config.length(), session.ses_config.c_str());
+	}
 	writer.write(tagStartTS, sizeof(session.ses_start), &session.ses_start);
 	if (!session.ses_logfile.empty()) {
 		writer.write(tagLogFile, session.ses_logfile.length(), session.ses_logfile.c_str());
@@ -924,7 +934,7 @@ void ConfigStorage::TouchFile::handler()
 {
 	try
 	{
-		if (!os_utils::touchFile(fileName))
+		if (!os_utils::touchFile(fileName.c_str()))
 			system_call_failed::raise("utime");
 
 		FbLocalStatus s;

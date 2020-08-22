@@ -402,27 +402,25 @@ void ChangeLog::lockState()
 	m_localMutex.enter(FB_FUNCTION);
 	m_sharedMemory->mutexLock();
 
+	// Reattach if someone has just deleted the shared file
+
+	while (m_sharedMemory->getHeader()->isDeleted())
+	{
+		// Shared memory must be empty at this point
+		fb_assert(!m_sharedMemory->getHeader()->pidLower);
+		fb_assert(!m_sharedMemory->getHeader()->pidUpper);
+
+		m_sharedMemory->mutexUnlock();
+		m_sharedMemory.reset();
+
+		Thread::yield();
+
+		initSharedFile();
+		m_sharedMemory->mutexLock();
+	}
+
 	try
 	{
-		while (!m_sharedMemory->getHeader()->pidUpper)
-		{
-			fb_assert(!m_sharedMemory->getHeader()->pidLower);
-
-			if (m_sharedMemory->justCreated())
-				break;
-
-			// Someone is going to delete shared file? Reattach.
-			m_sharedMemory->mutexUnlock();
-			m_sharedMemory.reset();
-
-			Thread::yield();
-
-			initSharedFile();
-			m_sharedMemory->mutexLock();
-		}
-
-		fb_assert(!m_sharedMemory->justCreated());
-
 		const auto state = m_sharedMemory->getHeader();
 
 		if (m_segments.isEmpty() || state->segmentCount > m_segments.getCount())

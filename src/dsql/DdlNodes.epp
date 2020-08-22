@@ -907,7 +907,7 @@ void DdlNode::storePrivileges(thread_db* tdbb, jrd_tra* transaction,
 							  const char* privileges)
 {
 	Attachment* const attachment = transaction->tra_attachment;
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	AutoCacheRequest request(tdbb, drq_s_usr_prvs, DYN_REQUESTS);
 
@@ -970,7 +970,7 @@ void DdlNode::storeGlobalField(thread_db* tdbb, jrd_tra* transaction, MetaName& 
 	const TypeClause* field, const string& computedSource, const BlrDebugWriter::BlrData& computedValue)
 {
 	Attachment* const attachment = transaction->tra_attachment;
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	const ValueListNode* elements = field->ranges;
 	const USHORT dims = elements ? elements->items.getCount() / 2 : 0;
@@ -1768,7 +1768,7 @@ void CreateAlterFunctionNode::executeCreate(thread_db* tdbb, DsqlCompilerScratch
 	jrd_tra* transaction)
 {
 	Attachment* const attachment = transaction->getAttachment();
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	if (package.isEmpty())
 	{
@@ -2776,7 +2776,7 @@ void CreateAlterProcedureNode::executeCreate(thread_db* tdbb, DsqlCompilerScratc
 	jrd_tra* transaction)
 {
 	Attachment* const attachment = transaction->getAttachment();
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	if (package.isEmpty())
 	{
@@ -3932,7 +3932,7 @@ void CreateCollationNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScra
 	jrd_tra* transaction)
 {
 	Attachment* const attachment = transaction->tra_attachment;
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	// run all statements under savepoint control
 	AutoSavePoint savePoint(tdbb, transaction);
@@ -5488,7 +5488,7 @@ void CreateAlterExceptionNode::executeCreate(thread_db* tdbb, DsqlCompilerScratc
 	jrd_tra* transaction)
 {
 	Attachment* const attachment = transaction->getAttachment();
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	executeDdlTrigger(tdbb, dsqlScratch, transaction, DTW_BEFORE,
 		DDL_TRIGGER_CREATE_EXCEPTION, name, NULL);
@@ -5730,7 +5730,7 @@ void CreateAlterSequenceNode::executeCreate(thread_db* tdbb, DsqlCompilerScratch
 	executeDdlTrigger(tdbb, dsqlScratch, transaction, DTW_BEFORE, DDL_TRIGGER_CREATE_SEQUENCE,
 		name, NULL);
 
-	const SINT64 val = value.specified ? value.value : 0;
+	const SINT64 val = value.orElse(1);
 	SLONG initialStep = 1;
 	if (step.specified)
 	{
@@ -5830,15 +5830,8 @@ bool CreateAlterSequenceNode::executeAlter(thread_db* tdbb, DsqlCompilerScratch*
 			const SINT64 oldValue = !X.RDB$INITIAL_VALUE.NULL ? X.RDB$INITIAL_VALUE : 0;
 			const SINT64 newValue = value.specified ? value.value : oldValue;
 
-			transaction->getGenIdCache()->put(id, newValue);
-
-			if (newValue != oldValue)
-			{
-				MODIFY X
-					X.RDB$INITIAL_VALUE.NULL = FALSE;
-					X.RDB$INITIAL_VALUE = newValue;
-				END_MODIFY
-			}
+			transaction->getGenIdCache()->put(id,
+				newValue - (!X.RDB$GENERATOR_INCREMENT.NULL ? X.RDB$GENERATOR_INCREMENT : 1));
 		}
 
 		dsc desc;
@@ -5862,7 +5855,7 @@ SSHORT CreateAlterSequenceNode::store(thread_db* tdbb, jrd_tra* transaction, con
 	fb_sysflag sysFlag, SINT64 val, SLONG step)
 {
 	Attachment* const attachment = transaction->tra_attachment;
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	DYN_UTIL_check_unique_name(tdbb, transaction, name, obj_generator);
 
@@ -5916,7 +5909,7 @@ SSHORT CreateAlterSequenceNode::store(thread_db* tdbb, jrd_tra* transaction, con
 
 	// The STORE above has caused the DFW item to be posted, so we just adjust the cached
 	// generator value.
-	transaction->getGenIdCache()->put(storedId, val);
+	transaction->getGenIdCache()->put(storedId, val - step);
 
 	return storedId;
 }
@@ -6477,7 +6470,7 @@ void RelationNode::defineField(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch
 
 			CreateAlterSequenceNode::store(tdbb, transaction, fieldDefinition.identitySequence,
 				fb_sysflag_identity_generator,
-				clause->identityOptions->startValue.orElse(0),
+				clause->identityOptions->startValue.orElse(1),
 				clause->identityOptions->increment.orElse(1));
 		}
 
@@ -8137,8 +8130,11 @@ void AlterRelationNode::modifyField(thread_db* tdbb, DsqlCompilerScratch* dsqlSc
 
 					if (clause->identityOptions->restart)
 					{
-						const SINT64 val = clause->identityOptions->startValue
-							.orElse(!GEN.RDB$INITIAL_VALUE.NULL ? GEN.RDB$INITIAL_VALUE : 0);
+						const SINT64 val =
+							clause->identityOptions->startValue
+								.orElse(!GEN.RDB$INITIAL_VALUE.NULL ? GEN.RDB$INITIAL_VALUE : 0) -
+							clause->identityOptions->increment
+								.orElse(!GEN.RDB$GENERATOR_INCREMENT.NULL ? GEN.RDB$GENERATOR_INCREMENT : 1);
 
 						transaction->getGenIdCache()->put(id, val);
 					}
@@ -8711,7 +8707,7 @@ void CreateAlterViewNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScra
 	jrd_tra* transaction)
 {
 	Attachment* const attachment = transaction->tra_attachment;
-	const MetaName& userName = attachment->att_user->getUserName();
+	const MetaString& userName = attachment->att_user->getUserName();
 
 	const dsql_rel* modifyingView = NULL;
 
@@ -10356,7 +10352,7 @@ void DropShadowNode::execute(thread_db* tdbb, DsqlCompilerScratch* /*dsqlScratch
 //----------------------
 
 
-USHORT PrivilegesNode::convertPrivilegeFromString(thread_db* tdbb, jrd_tra* transaction, Firebird::MetaName privilege)
+USHORT PrivilegesNode::convertPrivilegeFromString(thread_db* tdbb, jrd_tra* transaction, MetaName privilege)
 {
 	string priv(privilege.c_str());
 	priv.upper();
@@ -11004,7 +11000,7 @@ void DropRoleNode::execute(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch, jr
 //----------------------
 
 
-Firebird::MetaName UserNode::upper(const Firebird::MetaName& str)
+MetaName UserNode::upper(const MetaName& str)
 {
 	return str;
 }
@@ -11747,7 +11743,7 @@ void GrantRevokeNode::grantRevoke(thread_db* tdbb, jrd_tra* transaction, const G
 
 	if (grantor && !attachment->locksmith(tdbb, USE_GRANTED_BY_CLAUSE))
 	{
-		const Firebird::MetaName& owner(tdbb->getDatabase()->dbb_owner);
+		const MetaName& owner(tdbb->getDatabase()->dbb_owner);
 
 		if (owner == DBA_USER_NAME)
 			(Arg::PrivateDyn(252) << DBA_USER_NAME).raise();
@@ -12360,7 +12356,7 @@ void GrantRevokeNode::checkGrantorCanGrantDdl(thread_db* tdbb, jrd_tra* transact
 
 // Check if the grantor has grant option on generator privilege
 void GrantRevokeNode::checkGrantorCanGrantObject(thread_db* tdbb, jrd_tra* transaction, const char* grantor,
-		const char* privilege, const Firebird::MetaName& objName, SSHORT objType)
+		const char* privilege, const MetaName& objName, SSHORT objType)
 {
 	const Attachment* attachment = tdbb->getAttachment();
 

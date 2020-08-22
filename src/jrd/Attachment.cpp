@@ -47,7 +47,7 @@
 #include "../jrd/replication/Manager.h"
 
 #include "../common/classes/fb_string.h"
-#include "../common/classes/MetaName.h"
+#include "../jrd/MetaName.h"
 #include "../common/StatusArg.h"
 #include "../common/TimeZoneUtil.h"
 #include "../common/isc_proto.h"
@@ -84,13 +84,13 @@ CommitNumber ActiveSnapshots::getSnapshotForVersion(CommitNumber version_cn)
 
 
 // static method
-Jrd::Attachment* Jrd::Attachment::create(Database* dbb)
+Jrd::Attachment* Jrd::Attachment::create(Database* dbb, Firebird::IProvider* provider)
 {
 	MemoryPool* const pool = dbb->createPool();
 
 	try
 	{
-		Attachment* const attachment = FB_NEW_POOL(*pool) Attachment(pool, dbb);
+		Attachment* const attachment = FB_NEW_POOL(*pool) Attachment(pool, dbb, provider);
 		pool->setStatsGroup(attachment->att_memory_stats);
 		return attachment;
 	}
@@ -203,7 +203,7 @@ void Jrd::Attachment::backupStateReadUnLock(thread_db* tdbb)
 }
 
 
-Jrd::Attachment::Attachment(MemoryPool* pool, Database* dbb)
+Jrd::Attachment::Attachment(MemoryPool* pool, Database* dbb, IProvider* provider)
 	: att_pool(pool),
 	  att_memory_stats(&dbb->dbb_memory_stats),
 	  att_database(dbb),
@@ -251,7 +251,8 @@ Jrd::Attachment::Attachment(MemoryPool* pool, Database* dbb)
 	  att_idle_timeout(0),
 	  att_stmt_timeout(0),
 	  att_batches(*pool),
-	  att_initial_options(*pool)
+	  att_initial_options(*pool),
+	  att_provider(provider)
 {
 	att_internal.grow(irq_MAX);
 	att_dyn_req.grow(drq_MAX);
@@ -1011,7 +1012,7 @@ void Attachment::setupIdleTimer(bool clear)
 	}
 }
 
-UserId* Attachment::getUserId(const MetaName& userName)
+UserId* Attachment::getUserId(const MetaString& userName)
 {
 	// It's necessary to keep specified sql role of user
 	if (att_user && att_user->getUserName() == userName)

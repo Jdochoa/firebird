@@ -57,7 +57,7 @@ public:
 	}
 
 	const Firebird::string vcx_context_name;
-	const Firebird::MetaName vcx_relation_name;
+	const MetaName vcx_relation_name;
 	const USHORT vcx_context;
 	const ViewContextType vcx_type;
 };
@@ -229,9 +229,9 @@ public:
 	ULONG			rel_flags;
 	Format*			rel_current_format;	// Current record format
 
-	Firebird::MetaName	rel_name;		// ascii relation name
-	Firebird::MetaName	rel_owner_name;	// ascii owner
-	Firebird::MetaName	rel_security_name;	// security class name for relation
+	MetaName	rel_name;		// ascii relation name
+	MetaName	rel_owner_name;	// ascii owner
+	MetaName	rel_security_name;	// security class name for relation
 
 	vec<Format*>*	rel_formats;		// Known record formats
 	vec<jrd_fld*>*	rel_fields;			// vector of field blocks
@@ -331,6 +331,8 @@ public:
 	explicit jrd_rel(MemoryPool& p);
 
 	bool hasTriggers() const;
+	void releaseTriggers(thread_db* tdbb, bool destroy);
+	void replaceTriggers(thread_db* tdbb, TrigVector** triggers);
 
 	static Lock* createLock(thread_db* tdbb, MemoryPool* pool, jrd_rel* relation, lck_t, bool);
 	static int blocking_ast_gcLock(void*);
@@ -482,10 +484,10 @@ public:
 	ValueExprNode*	fld_source;			// source for view fields
 	ValueExprNode*	fld_default_value;	// default value, if any
 	ArrayField*	fld_array;			// array description, if array
-	Firebird::MetaName	fld_name;	// Field name
-	Firebird::MetaName	fld_security_name;	// security class name for field
-	Firebird::MetaName	fld_generator_name;	// identity generator name
-	Firebird::MetaNamePair	fld_source_rel_field;	// Relation/field source name
+	MetaName	fld_name;	// Field name
+	MetaName	fld_security_name;	// security class name for field
+	MetaName	fld_generator_name;	// identity generator name
+	MetaNamePair	fld_source_rel_field;	// Relation/field source name
 	Nullable<IdentityType> fld_identity_type;
 
 public:

@@ -1054,7 +1054,7 @@ static void check_sorts(CompilerScratch* csb, RseNode* rse)
 	RecordSourceNode* sub_rse;
 
 	if ((project || sort) && rse->rse_relations.getCount() == 1 && (sub_rse = rse->rse_relations[0]) &&
-		sub_rse->type == AggregateSourceNode::TYPE &&
+		nodeIs<AggregateSourceNode>(sub_rse) &&
 		(group = static_cast<AggregateSourceNode*>(sub_rse)->group))
 	{
 		MapNode* const map = static_cast<AggregateSourceNode*>(sub_rse)->map;
@@ -1237,7 +1237,7 @@ static void check_sorts(CompilerScratch* csb, RseNode* rse)
 
 			while (node)
 			{
-				if (node->type == RseNode::TYPE)
+				if (nodeIs<RseNode>(node))
 				{
 					new_rse = static_cast<RseNode*>(node);
 
@@ -1265,7 +1265,7 @@ static void check_sorts(CompilerScratch* csb, RseNode* rse)
 							{
 								RecordSourceNode* subNode = new_rse->rse_relations[i];
 
-								if (subNode->type == RelationSourceNode::TYPE &&
+								if (nodeIs<RelationSourceNode>(subNode) &&
 									subNode->getStream() == sort_stream &&
 									new_rse != rse)
 								{
@@ -1293,7 +1293,7 @@ static void check_sorts(CompilerScratch* csb, RseNode* rse)
 				}
 				else
 				{
-					if (node->type == RelationSourceNode::TYPE &&
+					if (nodeIs<RelationSourceNode>(node) &&
 						node->getStream() == sort_stream &&
 						new_rse && new_rse != rse)
 					{
@@ -1969,7 +1969,7 @@ void OPT_gen_aggregate_distincts(thread_db* tdbb, CompilerScratch* csb, MapNode*
 			asb->length += sizeof(ULONG);
 
 			sort_key->skd_flags = SKD_ascending;
-			asb->impure = CMP_impure(csb, sizeof(impure_agg_sort));
+			asb->impure = csb->allocImpure<impure_agg_sort>();
 			asb->desc = *desc;
 
 			aggNode->asb = asb;
@@ -2073,7 +2073,7 @@ static RecordSource* gen_outer(thread_db* tdbb, OptimizerBlk* opt, RseNode* rse,
 	{
 		const RecordSourceNode* node = rse->rse_relations[i];
 
-		if (node->type == RelationSourceNode::TYPE)
+		if (nodeIs<RelationSourceNode>(node))
 		{
 			stream_ptr[i]->stream_rsb = NULL;
 			stream_ptr[i]->stream_num = node->getStream();
@@ -2816,7 +2816,7 @@ static bool gen_equi_join(thread_db* tdbb, OptimizerBlk* opt, RiverList& org_riv
 				CastNode* cast = FB_NEW_POOL(*tdbb->getDefaultPool()) CastNode(*tdbb->getDefaultPool());
 				cast->source = node1;
 				cast->castDesc = result;
-				cast->impureOffset = CMP_impure(csb, sizeof(impure_value));
+				cast->impureOffset = csb->allocImpure<impure_value>();
 				node1 = cast;
 			}
 
@@ -2825,7 +2825,7 @@ static bool gen_equi_join(thread_db* tdbb, OptimizerBlk* opt, RiverList& org_riv
 				CastNode* cast = FB_NEW_POOL(*tdbb->getDefaultPool()) CastNode(*tdbb->getDefaultPool());
 				cast->source = node2;
 				cast->castDesc = result;
-				cast->impureOffset = CMP_impure(csb, sizeof(impure_value));
+				cast->impureOffset = csb->allocImpure<impure_value>();
 				node2 = cast;
 			}
 		}
@@ -3268,7 +3268,7 @@ static bool node_equality(const ValueExprNode* node1, const ValueExprNode* node2
 	if (!node1 || !node2)
 		return false;
 
-	if (node1->type != node2->type)
+	if (node1->getType() != node2->getType())
 		return false;
 
 	if (node1 == node2)
@@ -3294,7 +3294,7 @@ static bool node_equality(const BoolExprNode* node1, const BoolExprNode* node2)
 	if (!node1 || !node2)
 		return false;
 
-	if (node1->type != node2->type)
+	if (node1->getType() != node2->getType())
 		return false;
 
 	if (node1 == node2)

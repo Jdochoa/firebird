@@ -1100,7 +1100,7 @@ int gbak(Firebird::UtilSvc* uSvc)
 	}
 
 	// Initialize 'dpb'
-	Firebird::ClumpletWriter dpb(Firebird::ClumpletReader::Tagged, MAX_DPB_SIZE, isc_dpb_version1);
+	Firebird::ClumpletWriter dpb(Firebird::ClumpletReader::dpbList, MAX_DPB_SIZE);
 
 	dpb.insertString(isc_dpb_gbak_attach, FB_VERSION, fb_strlen(FB_VERSION));
 	uSvc->fillDpb(dpb);

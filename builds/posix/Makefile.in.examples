@@ -117,6 +117,7 @@ $(EXAMPLES_FB)/README:
 	$(CP) $(ROOT)/examples/udr/*.* $(EXAMPLES_FB)/udr/
 #	$(CP) intlemp.fdb $(EXAMPLES_FB)/empbuild/
 	$(CP) $(ROOT)/examples/readme $(EXAMPLES_FB)/README
+	$(CP) $(ROOT)/examples/empbuild/employe2.sql $(EXAMPLES_FB)/empbuild/
 
 $(EXAMPLES_DEST)% : $(EXAMPLES_SRC)%
 	$(CP) $^ $@
